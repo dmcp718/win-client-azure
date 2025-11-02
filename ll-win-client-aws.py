@@ -335,8 +335,8 @@ class LLWinClientAWSSetup:
         """Display application banner"""
         banner = Text()
         banner.append("╔══════════════════════════════════════════╗\n", style="bold blue")
-        banner.append("║  LucidLink Windows Client Deployment    ║\n", style="bold blue")
-        banner.append("║  Multi-Instance Windows Provisioning    ║\n", style="bold blue")
+        banner.append("║  LucidLink Windows Client Deployment     ║\n", style="bold blue")
+        banner.append("║  Multi-Instance Windows Provisioning     ║\n", style="bold blue")
         banner.append("╚══════════════════════════════════════════╝", style="bold blue")
         console.print(banner)
         console.print()

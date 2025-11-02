@@ -212,8 +212,8 @@ Generated at: `~/Desktop/LucidLink-DCV/`
 
 ```
 ╔══════════════════════════════════════════╗
-║  LucidLink Windows Client Deployment    ║
-║  Multi-Instance Windows Provisioning    ║
+║  LucidLink Windows Client Deployment     ║
+║  Multi-Instance Windows Provisioning     ║
 ╚══════════════════════════════════════════╝
 
 1. Configure Client Deployment
