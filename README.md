@@ -300,6 +300,7 @@ ll-win-client-aws/
 - **[IAM Setup Guide](docs/IAM-SETUP.md)** - Create secure IAM user (recommended)
 - **[Deployment Guide](docs/DEPLOYMENT-GUIDE.md)** - Complete deployment walkthrough
 - **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Test Plan](docs/TEST-PLAN.md)** - Complete test plan for validation
 
 ### Quick References
 - **IAM Quick Start**: `cd iam && ./setup.sh`
