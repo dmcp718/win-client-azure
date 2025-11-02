@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Tradeshow IAM User Cleanup Script
+# LucidLink Windows Client IAM User Cleanup Script
 # =============================================================================
 # This script removes the IAM user and associated resources
 
@@ -19,7 +19,7 @@ IAM_PATH="/ll-win-client/"
 POLICY_NAME="ll-win-client-deployer-policy"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Tradeshow IAM User Cleanup${NC}"
+echo -e "${BLUE}LucidLink Windows Client IAM User Cleanup${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo
 echo -e "${RED}WARNING: This will delete the IAM user and all access keys!${NC}"

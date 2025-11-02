@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Tradeshow IAM User Setup Script (AWS CLI Method)
+# LucidLink Windows Client IAM User Setup Script (AWS CLI Method)
 # =============================================================================
 # This script creates a limited IAM user for ll-win-client deployments
 # Prerequisites: AWS CLI configured with admin credentials
@@ -21,7 +21,7 @@ POLICY_NAME="ll-win-client-deployer-policy"
 POLICY_FILE="ll-win-client-user-policy.json"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Tradeshow IAM User Setup${NC}"
+echo -e "${BLUE}LucidLink Windows Client IAM User Setup${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo
 
@@ -57,7 +57,7 @@ if aws iam get-user --user-name "$IAM_USER_NAME" &> /dev/null; then
 else
     aws iam create-user --user-name "$IAM_USER_NAME" --path "$IAM_PATH" --tags \
         Key=Name,Value="$IAM_USER_NAME" \
-        Key=Purpose,Value="Tradeshow Windows client deployments" \
+        Key=Purpose,Value="LucidLink Windows client deployments" \
         Key=Environment,Value=demo
     echo -e "${GREEN}✓ User created${NC}"
 fi
@@ -77,7 +77,7 @@ else
         --description "Limited permissions for ll-win-client Windows client deployments in us-west-2" \
         --tags \
             Key=Name,Value="$POLICY_NAME" \
-            Key=Purpose,Value="Tradeshow deployment permissions" \
+            Key=Purpose,Value="LucidLink deployment permissions" \
             Key=Environment,Value=demo
     echo -e "${GREEN}✓ Policy created${NC}"
 fi

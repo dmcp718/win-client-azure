@@ -1,6 +1,6 @@
-# Tradeshow IAM User Setup
+# LucidLink Windows Client - IAM User Setup
 
-This directory contains IAM configuration for creating a **limited-privilege user** specifically for ll-win-client Windows client deployments.
+This directory contains IAM configuration for creating a **limited-privilege user** specifically for LucidLink Windows client deployments.
 
 ## Prerequisites
 
@@ -43,7 +43,7 @@ This IAM user follows the **principle of least privilege**:
 
 **Step 1: Navigate to IAM directory**
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 ```
 
 **Step 2: Initialize Terraform**
@@ -152,19 +152,18 @@ Expected: Access Denied error ✓
 
 ---
 
-## Using with Tradeshow Script
+## Using with LucidLink Windows Client Script
 
-Update your ll-win-client script configuration to use these credentials:
+Run the deployment script and use these IAM credentials:
 
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client
-uv run ll-win-client-client-aws.py
+uv run ll-win-client-aws.py
 ```
 
 When prompted for AWS credentials:
 1. Enter the **Access Key ID** from the IAM user
 2. Enter the **Secret Access Key** from the IAM user
-3. Select region: **Choose any AWS region for your ll-win-client** (e.g., us-west-2, us-east-1, eu-west-1, ap-southeast-1, etc.)
+3. Select region: **Choose any AWS region for deployment** (e.g., us-west-2, us-east-1, eu-west-1, ap-southeast-1, etc.)
 
 The script will automatically use these credentials for all AWS operations.
 
@@ -238,7 +237,7 @@ This IAM user can only manage resources with specific naming patterns:
 
 ### Remove IAM User (Terraform)
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 terraform destroy
 ```
 
@@ -313,5 +312,5 @@ For issues or questions:
 
 ---
 
-**Last Updated:** 2025-01-27
+**Last Updated:** 2025-02-01
 **Policy Version:** 1.0

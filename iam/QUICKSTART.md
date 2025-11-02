@@ -1,6 +1,6 @@
-# Quick Start: IAM User for Tradeshow Script
+# Quick Start: IAM User for LucidLink Windows Client
 
-This IAM user provides **secure, limited access** for running the ll-win-client deployment script.
+This IAM user provides **secure, limited access** for running the LucidLink Windows client deployment script.
 
 ## Why This User?
 
@@ -17,7 +17,7 @@ Instead of using your admin AWS credentials, this dedicated IAM user:
 ### Option A: Quick Setup with Script (Easiest)
 
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 ./setup.sh
 ```
 
@@ -34,7 +34,7 @@ The script will:
 ### Option B: Terraform (Infrastructure as Code)
 
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 terraform init
 terraform apply
 ```
@@ -46,13 +46,13 @@ aws iam create-access-key --user-name ll-win-client-deployer
 
 ---
 
-## Using with Tradeshow Script
+## Using with LucidLink Windows Client Script
 
 Once you have the IAM user's access keys:
 
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client
-uv run ll-win-client-client-aws.py
+# From the repository root
+uv run ll-win-client-aws.py
 ```
 
 When prompted:
@@ -62,7 +62,7 @@ When prompted:
 
 The script will save these credentials locally in:
 ```
-~/.ll-win-client-client/config.json
+~/.ll-win-client/config.json
 ```
 
 ---
@@ -118,7 +118,7 @@ Expected: Access Denied error ✓
 
 ```bash
 # 1. Create the IAM user
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 ./setup.sh
 
 # When prompted, create access key: yes
@@ -128,9 +128,9 @@ cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
 # 2. Test the credentials
 aws sts get-caller-identity --profile ll-win-client
 
-# 3. Run the ll-win-client script
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client
-uv run ll-win-client-client-aws.py
+# 3. Run the deployment script (from repository root)
+cd ..
+uv run ll-win-client-aws.py
 
 # 4. When prompted for AWS credentials:
 #    Region: (your choice - e.g., us-west-2, us-east-1, eu-west-1)
@@ -151,7 +151,7 @@ uv run ll-win-client-client-aws.py
 When you no longer need the IAM user:
 
 ```bash
-cd /Users/davidphillips/Cursor_projects/ll-win-client-aws-client/iam
+cd iam
 ./cleanup.sh
 ```
 
@@ -172,7 +172,7 @@ This removes:
 - Delete access keys when not actively using them
 
 ### ⚠️ Important:
-- The credentials are saved locally at `~/.ll-win-client-client/config.json`
+- The credentials are saved locally at `~/.ll-win-client/config.json`
 - This file contains base64-encoded credentials (not encrypted)
 - Keep this file secure or delete it when done
 
@@ -217,5 +217,5 @@ aws iam create-access-key --user-name ll-win-client-deployer
 
 ---
 
-**Created**: 2025-01-27
-**Purpose**: Secure, limited IAM user for ll-win-client Windows deployments
+**Last Updated**: 2025-02-01
+**Purpose**: Secure, limited IAM user for LucidLink Windows client deployments

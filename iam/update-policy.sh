@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Update Tradeshow IAM Policy
+# Update LucidLink Windows Client IAM Policy
 # =============================================================================
 # This script updates the existing IAM policy with new permissions
 
@@ -19,7 +19,7 @@ POLICY_NAME="ll-win-client-deployer-policy"
 POLICY_FILE="ll-win-client-user-policy.json"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Update Tradeshow IAM Policy${NC}"
+echo -e "${BLUE}Update LucidLink Windows Client IAM Policy${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo
 

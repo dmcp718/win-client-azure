@@ -1,5 +1,5 @@
 # =============================================================================
-# Tradeshow IAM User Setup
+# LucidLink Windows Client IAM User Setup
 # =============================================================================
 # This creates a limited IAM user for ll-win-client deployments with minimal
 # required permissions for EC2, SSM, Secrets Manager, and networking in us-west-2
@@ -44,7 +44,7 @@ resource "aws_iam_user" "ll-win-client_deployer" {
 
   tags = {
     Name        = var.iam_user_name
-    Purpose     = "Tradeshow Windows client deployments"
+    Purpose     = "LucidLink Windows client deployments"
     Environment = "demo"
     ManagedBy   = "terraform"
   }
@@ -63,7 +63,7 @@ resource "aws_iam_policy" "ll-win-client_deployer_policy" {
 
   tags = {
     Name        = "${var.iam_user_name}-policy"
-    Purpose     = "Tradeshow deployment permissions"
+    Purpose     = "LucidLink deployment permissions"
     Environment = "demo"
     ManagedBy   = "terraform"
   }
