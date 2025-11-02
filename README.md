@@ -226,7 +226,7 @@ Generated at: `~/Desktop/LucidLink-DCV/`
 3. Deploy Client Instances
 4. View Deployment Status
 5. Regenerate Connection Files (DCV)
-6. Stop All Instances (Save Money)
+6. Stop All Instances
 7. Start All Instances
 8. Destroy Client Instances
 9. Exit

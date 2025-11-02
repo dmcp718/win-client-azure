@@ -1917,7 +1917,7 @@ preferred-video-codec=h264
             console.print("3. Deploy Client Instances")
             console.print("4. View Deployment Status")
             console.print("5. Regenerate Connection Files (DCV)")
-            console.print("6. Stop All Instances (Save Money)")
+            console.print("6. Stop All Instances")
             console.print("7. Start All Instances")
             console.print("8. Destroy Client Instances")
             console.print("9. Exit")
