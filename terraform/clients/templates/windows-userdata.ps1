@@ -168,27 +168,54 @@ if ($lucidlinkInstaller -and (Test-Path $lucidlinkInstaller)) {
 }
 
 # ==============================================================================
-# Configure LucidLink (if installed)
+# Configure LucidLink as Windows Service (FIXED VERSION)
 # ==============================================================================
-if ($lucidlinkInstaller) {
-    Write-Log "Retrieving LucidLink credentials..."
+$lucidPath = "C:\Program Files\LucidLink\bin\lucid.exe"
+
+if (Test-Path $lucidPath) {
+    Write-Log "Configuring LucidLink as Windows Service..."
+
     try {
+        # Step 1: Install LucidLink service
+        Write-Log "Installing LucidLink service..."
+        & $lucidPath service --install
+        Start-Sleep -Seconds 3
+
+        # Step 2: Start the service
+        Write-Log "Starting LucidLink service..."
+        & $lucidPath service --start
+        Start-Sleep -Seconds 5
+
+        # Step 3: Retrieve credentials from Secrets Manager
+        Write-Log "Retrieving credentials from Secrets Manager..."
         $secretJson = & "C:\Program Files\Amazon\AWSCLIV2\aws.exe" secretsmanager get-secret-value --secret-id "${secret_arn}" --region "${aws_region}" --query SecretString --output text
         $creds = $secretJson | ConvertFrom-Json
 
-        $lucidPath = "C:\Program Files\LucidLink\bin\Lucid.exe"
-        if (Test-Path $lucidPath) {
-            Write-Log "Starting LucidLink daemon..."
-            & $lucidPath daemon --fs $creds.domain --user $creds.username --password $creds.password --mount-point "${mount_point}"
-            Write-Log "LucidLink configured and mounted to ${mount_point}"
+        # Step 4: Link to filespace (config persists across reboots!)
+        Write-Log "Linking to filespace: $($creds.domain)"
+        & $lucidPath link --fs $creds.domain --user $creds.username --password $creds.password --mount-point "${mount_point}"
+
+        Start-Sleep -Seconds 10
+
+        # Step 5: Verify service status
+        Write-Log "Checking LucidLink service status..."
+        $serviceStatus = & $lucidPath service --status
+        Write-Log "LucidLink service status: $serviceStatus"
+
+        # Step 6: Verify mount point
+        if (Test-Path "${mount_point}") {
+            Write-Log "SUCCESS: LucidLink mounted to ${mount_point}"
         } else {
-            Write-Log "WARNING: LucidLink not found at $lucidPath"
+            Write-Log "WARNING: Mount point not yet accessible (may need more time)"
         }
+
+        Write-Log "LucidLink service configured successfully"
+
     } catch {
-        Write-Log "WARNING: LucidLink configuration failed: $_"
+        Write-Log "ERROR: Failed to configure LucidLink service: $_"
     }
 } else {
-    Write-Log "Skipping LucidLink configuration (not installed)"
+    Write-Log "WARNING: LucidLink executable not found at $lucidPath - skipping configuration"
 }
 
 # ==============================================================================
@@ -209,8 +236,8 @@ Write-Log "==================================================================="
 
 # Test mount point one more time
 Start-Sleep -Seconds 5
-if (Test-Path $mountPoint) {
-    Write-Log "SUCCESS: Mount point is accessible"
+if (Test-Path "${mount_point}") {
+    Write-Log "SUCCESS: Mount point ${mount_point} is accessible"
 } else {
     Write-Log "WARNING: Mount point verification failed. Check LucidLink service status."
 }

@@ -195,12 +195,12 @@ check_lucidlink_mount() {
         print_result "LucidLink Mount - Drive Exists" "FAIL"
     fi
 
-    # Check LucidLink service
-    echo "Checking LucidLink service status..."
+    # Check LucidLink Windows Service
+    echo "Checking LucidLink Windows Service status..."
     SERVICE_CHECK=$(aws ssm send-command \
         --instance-ids "$instance_id" \
         --document-name "AWS-RunPowerShellScript" \
-        --parameters 'commands=["(Get-Service -Name Lucid).Status"]' \
+        --parameters 'commands=["& \"C:\\Program Files\\LucidLink\\bin\\lucid.exe\" service --status"]' \
         --region "$region" \
         --output text \
         --query 'Command.CommandId')
@@ -214,7 +214,9 @@ check_lucidlink_mount() {
         --query 'StandardOutputContent' \
         --output text)
 
-    if [[ "$SERVICE_RESULT" == *"Running"* ]]; then
+    echo "Service status output: $SERVICE_RESULT"
+
+    if [[ "$SERVICE_RESULT" == *"running"* ]] || [[ "$SERVICE_RESULT" == *"Running"* ]] || [[ "$SERVICE_RESULT" == *"active"* ]]; then
         echo -e "${GREEN}✓${NC} LucidLink service is running"
         print_result "LucidLink Service Running" "PASS"
     else
@@ -222,12 +224,12 @@ check_lucidlink_mount() {
         print_result "LucidLink Service Running" "FAIL"
     fi
 
-    # Get lucid status
+    # Get lucid link status
     echo "Getting LucidLink mount status..."
     STATUS_CHECK=$(aws ssm send-command \
         --instance-ids "$instance_id" \
         --document-name "AWS-RunPowerShellScript" \
-        --parameters 'commands=["lucid status"]' \
+        --parameters 'commands=["& \"C:\\Program Files\\LucidLink\\bin\\lucid.exe\" status"]' \
         --region "$region" \
         --output text \
         --query 'Command.CommandId')
@@ -244,7 +246,7 @@ check_lucidlink_mount() {
     echo "LucidLink Status:"
     echo "$STATUS_RESULT"
 
-    if [[ "$STATUS_RESULT" == *"Filespace"* ]] || [[ "$STATUS_RESULT" == *"mounted"* ]]; then
+    if [[ "$STATUS_RESULT" == *"Filespace"* ]] || [[ "$STATUS_RESULT" == *"mounted"* ]] || [[ "$STATUS_RESULT" == *"linked"* ]]; then
         echo -e "${GREEN}✓${NC} LucidLink filespace mounted"
         print_result "LucidLink Filespace Mounted" "PASS"
     else
