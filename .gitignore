@@ -70,6 +70,12 @@ Desktop.ini
 *.bak
 *.backup
 
+# Test results and documentation (generated during testing)
+test-results-*.md
+TEST-*.md
+FINAL-*.md
+LUCIDLINK-*.md
+
 # DCV/RDP connection files (contain passwords)
 *.dcv
 *.rdp
