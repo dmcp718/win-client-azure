@@ -120,6 +120,48 @@ try {
 }
 
 # ==============================================================================
+# Install Google Chrome and Set as Default Browser
+# ==============================================================================
+Write-Log "Installing Google Chrome..."
+try {
+    # Download Chrome installer
+    $chromeInstallerUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
+    $chromeInstallerPath = "$env:TEMP\chrome_installer.exe"
+
+    Write-Log "Downloading Chrome installer..."
+    Invoke-WebRequest -Uri $chromeInstallerUrl -OutFile $chromeInstallerPath -UseBasicParsing
+
+    # Install Chrome silently
+    Write-Log "Installing Chrome (silent mode)..."
+    Start-Process -FilePath $chromeInstallerPath -Args "/silent /install" -Wait -NoNewWindow
+
+    # Clean up installer
+    Remove-Item $chromeInstallerPath -Force -ErrorAction SilentlyContinue
+
+    # Wait for installation to complete
+    Start-Sleep -Seconds 5
+
+    # Set Chrome as default browser for HTTP/HTTPS protocols
+    Write-Log "Setting Chrome as default browser..."
+    $chromePath = "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations"
+
+    @('http', 'https') | ForEach-Object {
+        try {
+            $path = "$chromePath\$_\UserChoice"
+            New-Item -Path $path -Force | Out-Null
+            Set-ItemProperty -Path $path -Name "ProgId" -Value "ChromeHTML" -Force
+            Write-Log "Set Chrome as default for: $_"
+        } catch {
+            Write-Log "Warning: Could not set default browser for $_`: $_"
+        }
+    }
+
+    Write-Log "Google Chrome installed successfully"
+} catch {
+    Write-Log "Warning: Chrome installation failed: $_"
+}
+
+# ==============================================================================
 # Download and Install LucidLink
 # ==============================================================================
 Write-Log "Downloading LucidLink installer..."
