@@ -13,6 +13,23 @@ try {
     Write-Log "========================================="
     Write-Log "LucidLink Windows Client - Bootstrap"
     Write-Log "========================================="
+
+    # Install AWS CLI if not present
+    $awsCliPath = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"
+    if (-not (Test-Path $awsCliPath)) {
+        Write-Log "Installing AWS CLI v2..."
+        $awsInstallerUrl = "https://awscli.amazonaws.com/AWSCLIV2.msi"
+        $awsInstallerPath = "$env:TEMP\AWSCLIV2.msi"
+        Write-Log "Downloading AWS CLI installer..."
+        Invoke-WebRequest -Uri $awsInstallerUrl -OutFile $awsInstallerPath -UseBasicParsing
+        Write-Log "Installing AWS CLI..."
+        Start-Process msiexec.exe -ArgumentList "/i `"$awsInstallerPath`" /qn /norestart" -Wait -NoNewWindow
+        Remove-Item -Path $awsInstallerPath -Force
+        Write-Log "AWS CLI installed successfully"
+    } else {
+        Write-Log "AWS CLI already installed"
+    }
+
     Write-Log "Downloading full setup script from S3..."
 
     # Download the full setup script from S3
@@ -20,11 +37,11 @@ try {
     $ScriptKey = "windows-setup.ps1"
     $LocalScript = "C:\windows-setup.ps1"
 
-    # Use AWS PowerShell or AWS CLI to download the script
-    $AwsCommand = "aws s3 cp s3://$BucketName/$ScriptKey $LocalScript --region ${aws_region}"
+    # Use AWS CLI to download the script
+    $AwsCommand = "`"$awsCliPath`" s3 cp s3://$BucketName/$ScriptKey $LocalScript --region ${aws_region}"
     Write-Log "Running: $AwsCommand"
 
-    $process = Start-Process -FilePath "aws" -ArgumentList "s3","cp","s3://$BucketName/$ScriptKey",$LocalScript,"--region","${aws_region}" -Wait -PassThru -NoNewWindow
+    $process = Start-Process -FilePath $awsCliPath -ArgumentList "s3","cp","s3://$BucketName/$ScriptKey",$LocalScript,"--region","${aws_region}" -Wait -PassThru -NoNewWindow
 
     if ($process.ExitCode -ne 0) {
         throw "Failed to download setup script from S3. Exit code: $($process.ExitCode)"
