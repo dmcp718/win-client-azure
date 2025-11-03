@@ -1878,8 +1878,42 @@ preferred-video-codec=h264
                 waiter.wait(InstanceIds=stopped_instances)
 
             console.print(f"\n[{self.colors['success']}]✓ Successfully started {len(stopped_instances)} instance(s)[/]")
-            console.print(f"\n[{self.colors['info']}]Instances are now running. You can connect via DCV.[/]")
+
+            # Get NEW public IPs after start (they changed!)
+            console.print(f"\n[{self.colors['info']}]Updating DCV connection files with new IP addresses...[/]")
+            response = ec2.describe_instances(InstanceIds=instance_ids)
+            public_ips = []
+            for reservation in response['Reservations']:
+                for instance in reservation['Instances']:
+                    public_ip = instance.get('PublicIpAddress', 'N/A')
+                    public_ips.append(public_ip)
+
+            # Try to read existing password from PASSWORDS.txt
+            password = None
+            dcv_location = Path.home() / "Desktop" / "LucidLink-DCV"
+            password_file = dcv_location / "PASSWORDS.txt"
+            if password_file.exists():
+                try:
+                    with open(password_file, 'r') as f:
+                        for line in f:
+                            if line.strip().startswith("Password:"):
+                                password = line.split(":", 1)[1].strip()
+                                break
+                except Exception as e:
+                    logger.warning(f"Could not read password from file: {e}")
+
+            # Regenerate DCV files with new IPs
+            for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
+                instance_name = f"ll-win-client-{idx + 1}"
+                try:
+                    self.generate_dcv_file(public_ip, instance_name, password=password)
+                    console.print(f"  [{self.colors['success']}]✓[/] Updated: {instance_name}.dcv ({public_ip})")
+                except Exception as e:
+                    logger.warning(f"Failed to regenerate DCV file: {e}")
+
+            console.print(f"\n[{self.colors['success']}]✓ DCV connection files updated with new IP addresses[/]")
             console.print(f"[{self.colors['info']}]Connection files: ~/Desktop/LucidLink-DCV/[/]")
+            console.print(f"[dim]Note: Public IPs change when instances are stopped/started[/dim]")
 
         except Exception as e:
             console.print(f"\n[{self.colors['error']}]Error starting instances: {e}[/]")
