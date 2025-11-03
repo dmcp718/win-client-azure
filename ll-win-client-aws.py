@@ -1002,6 +1002,37 @@ ssh_key_name = "{config.get('ssh_key_name', '')}"
             logger.debug(f"Failed to check SSM agent status: {e}")
             return 'Unknown'
 
+    def check_dcv_status(self, public_ip: str) -> str:
+        """Check if Amazon DCV server is accessible on port 8443
+
+        Args:
+            public_ip: Public IP address of the instance
+
+        Returns:
+            'Ready', 'NotReady', or 'Unknown'
+        """
+        try:
+            import socket
+
+            if not public_ip or public_ip == "N/A":
+                return 'Unknown'
+
+            # Try to connect to port 8443 with 3 second timeout
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+
+            result = sock.connect_ex((public_ip, 8443))
+            sock.close()
+
+            if result == 0:
+                return 'Ready'  # Port is open
+            else:
+                return 'NotReady'  # Port is closed
+
+        except Exception as e:
+            logger.debug(f"Failed to check DCV status for {public_ip}: {e}")
+            return 'Unknown'
+
     def wait_for_ssm_ready(self, instance_ids: List[str], timeout_minutes: int = 15) -> Dict[str, bool]:
         """Wait for SSM agent to be ready on instances
 
@@ -1567,6 +1598,7 @@ preferred-video-codec=h264
         instances_table.add_column("Public IP", style="white")
         instances_table.add_column("EC2 Status", style="green")
         instances_table.add_column("SSM Status", style="yellow")
+        instances_table.add_column("DCV Status", style="magenta")
 
         # Check instance status if boto3 available
         instance_statuses = {}
@@ -1624,13 +1656,23 @@ preferred-video-codec=h264
             else:
                 ssm_status_display = "[dim]Unknown[/dim]"
 
+            # Get DCV status
+            dcv_status = self.check_dcv_status(public_ip)
+            if dcv_status == "Ready":
+                dcv_status_display = "[green]Ready[/green]"
+            elif dcv_status == "NotReady":
+                dcv_status_display = "[yellow]Not Ready[/yellow]"
+            else:
+                dcv_status_display = "[dim]Unknown[/dim]"
+
             instances_table.add_row(
                 str(idx + 1),
                 instance_id,
                 private_ip,
                 public_ip,
                 status,
-                ssm_status_display
+                ssm_status_display,
+                dcv_status_display
             )
 
         console.print(instances_table)
