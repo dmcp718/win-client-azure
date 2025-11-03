@@ -1898,6 +1898,7 @@ preferred-video-codec=h264
         console.print()
 
         # Check current status
+        import boto3
         region = self.config.get('region', 'us-east-1')
         ec2 = boto3.client('ec2', region_name=region)
 
@@ -1978,6 +1979,7 @@ preferred-video-codec=h264
         console.print()
 
         # Check current status
+        import boto3
         region = self.config.get('region', 'us-east-1')
         ec2 = boto3.client('ec2', region_name=region)
 
