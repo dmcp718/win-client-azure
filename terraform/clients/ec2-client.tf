@@ -275,8 +275,8 @@ resource "aws_launch_template" "windows_client" {
     enabled = true
   }
 
-  # PowerShell userdata script (gzip compressed to stay under 16KB limit)
-  user_data = var.filespace_domain != "" ? base64gzip(templatefile("${path.module}/templates/windows-userdata.ps1", {
+  # PowerShell userdata script (minified to stay under 16KB limit)
+  user_data = var.filespace_domain != "" ? base64encode(templatefile("${path.module}/templates/windows-userdata-min.ps1", {
     filespace_domain     = var.filespace_domain
     filespace_user       = var.filespace_user
     filespace_password   = var.filespace_password
@@ -284,7 +284,7 @@ resource "aws_launch_template" "windows_client" {
     aws_region           = var.aws_region
     installer_url        = var.lucidlink_installer_url
     secret_arn           = var.filespace_domain != "" ? aws_secretsmanager_secret.lucidlink_credentials[0].arn : ""
-  })) : base64gzip("<powershell>\nWrite-Host 'LucidLink configuration not provided'\n</powershell>")
+  })) : base64encode("<powershell>\nWrite-Host 'LucidLink configuration not provided'\n</powershell>")
 
   tag_specifications {
     resource_type = "instance"
