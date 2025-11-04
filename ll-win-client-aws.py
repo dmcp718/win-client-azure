@@ -535,6 +535,18 @@ class LLWinClientAWSSetup:
             "Mount Point (Windows drive letter or path)",
             default=existing_config.get('mount_point', 'L:')
         )
+
+        # Ask if LucidLink should be auto-configured as service
+        auto_config_default = existing_config.get('auto_configure_lucidlink', 'yes')
+        auto_configure = Prompt.ask(
+            "Auto-configure LucidLink as Windows service and connect to filespace?",
+            choices=['yes', 'no'],
+            default=auto_config_default
+        )
+        config['auto_configure_lucidlink'] = auto_configure
+
+        if auto_configure == 'no':
+            console.print(f"  [{self.colors['info']}]ℹ LucidLink will be installed but not configured. End users will need to configure and connect manually.[/]")
         console.print()
 
         # Step 5: Instance Configuration
@@ -676,6 +688,7 @@ class LLWinClientAWSSetup:
             'Username': display_config.get('filespace_user', 'Not set'),
             'Password': display_config.get('filespace_password', 'Not set'),
             'Mount Point': display_config.get('mount_point', 'Not set'),
+            'Auto-configure LucidLink': display_config.get('auto_configure_lucidlink', 'yes'),
         }
 
         instance_settings = {
@@ -1447,6 +1460,8 @@ preferred-video-codec=h264
                     try:
                         env = os.environ.copy()
                         env['DCV_ADMIN_PASSWORD'] = dcv_password
+                        # Pass LucidLink auto-configuration flag
+                        env['AUTO_CONFIGURE_LUCIDLINK'] = '1' if self.config.get('auto_configure_lucidlink') == 'yes' else '0'
                         result = subprocess.run(
                             [str(deployment_script), instance_id, region],
                             env=env,

@@ -293,45 +293,50 @@ main() {
         '$lucidPath = "C:\Program Files\LucidLink\bin\lucid.exe"' \
         'if (Test-Path $lucidPath) { Write-Host "LucidLink installed successfully" } else { Write-Host "WARNING: Installation may have failed" }'
 
-    # Step 7: Configure LucidLink as Windows Service
-    run_ssm "Configuring LucidLink filespace" \
-        '$secretName = "'"$SECRET_NAME"'"' \
-        '$region = "'"$REGION"'"' \
-        '$mountPoint = "'"$MOUNT_POINT"'"' \
-        '$lucidPath = "C:\Program Files\LucidLink\bin\lucid.exe"' \
-        'if (Test-Path $lucidPath) {' \
-        '    Write-Host "Installing LucidLink service..."' \
-        '    & $lucidPath service --install' \
-        '    Start-Sleep -Seconds 3' \
-        '    Write-Host "Starting LucidLink service..."' \
-        '    & $lucidPath service --start' \
-        '    Start-Sleep -Seconds 5' \
-        '    Write-Host "Retrieving credentials from Secrets Manager..."' \
-        '    $awsPath = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"' \
-        '    try {' \
-        '        $secretJson = & $awsPath secretsmanager get-secret-value --secret-id $secretName --region $region --query SecretString --output text 2>&1' \
-        '        if ($LASTEXITCODE -ne 0) {' \
-        '            Write-Host "ERROR: Failed to retrieve secret from Secrets Manager"' \
-        '            Write-Host "Secret name: $secretName"' \
-        '            Write-Host "Error: $secretJson"' \
-        '            exit 1' \
-        '        }' \
-        '        $creds = $secretJson | ConvertFrom-Json' \
-        '        Write-Host "Linking to filespace: $($creds.domain)"' \
-        '        Write-Host "Username: $($creds.username)"' \
-        '        & $lucidPath link --fs $creds.domain --user $creds.username --password $creds.password --mount-point $mountPoint' \
-        '        Start-Sleep -Seconds 10' \
-        '        if (Test-Path $mountPoint) {' \
-        '            Write-Host "SUCCESS: Filespace mounted to $mountPoint"' \
-        '        } else {' \
-        '            Write-Host "WARNING: Mount point not yet accessible (may need more time)"' \
-        '        }' \
-        '    } catch {' \
-        '        Write-Host "ERROR: Exception during LucidLink configuration: $_"' \
-        '    }' \
-        '} else {' \
-        '    Write-Host "ERROR: LucidLink not installed"' \
-        '}'
+    # Step 7: Configure LucidLink as Windows Service (optional)
+    if [ "${AUTO_CONFIGURE_LUCIDLINK:-1}" = "1" ]; then
+        run_ssm "Configuring LucidLink filespace" \
+            '$secretName = "'"$SECRET_NAME"'"' \
+            '$region = "'"$REGION"'"' \
+            '$mountPoint = "'"$MOUNT_POINT"'"' \
+            '$lucidPath = "C:\Program Files\LucidLink\bin\lucid.exe"' \
+            'if (Test-Path $lucidPath) {' \
+            '    Write-Host "Installing LucidLink service..."' \
+            '    & $lucidPath service --install' \
+            '    Start-Sleep -Seconds 3' \
+            '    Write-Host "Starting LucidLink service..."' \
+            '    & $lucidPath service --start' \
+            '    Start-Sleep -Seconds 5' \
+            '    Write-Host "Retrieving credentials from Secrets Manager..."' \
+            '    $awsPath = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"' \
+            '    try {' \
+            '        $secretJson = & $awsPath secretsmanager get-secret-value --secret-id $secretName --region $region --query SecretString --output text 2>&1' \
+            '        if ($LASTEXITCODE -ne 0) {' \
+            '            Write-Host "ERROR: Failed to retrieve secret from Secrets Manager"' \
+            '            Write-Host "Secret name: $secretName"' \
+            '            Write-Host "Error: $secretJson"' \
+            '            exit 1' \
+            '        }' \
+            '        $creds = $secretJson | ConvertFrom-Json' \
+            '        Write-Host "Linking to filespace: $($creds.domain)"' \
+            '        Write-Host "Username: $($creds.username)"' \
+            '        & $lucidPath link --fs $creds.domain --user $creds.username --password $creds.password --mount-point $mountPoint' \
+            '        Start-Sleep -Seconds 10' \
+            '        if (Test-Path $mountPoint) {' \
+            '            Write-Host "SUCCESS: Filespace mounted to $mountPoint"' \
+            '        } else {' \
+            '            Write-Host "WARNING: Mount point not yet accessible (may need more time)"' \
+            '        }' \
+            '    } catch {' \
+            '        Write-Host "ERROR: Exception during LucidLink configuration: $_"' \
+            '    }' \
+            '} else {' \
+            '    Write-Host "ERROR: LucidLink not installed"' \
+            '}'
+    else
+        echo "INFO: Skipping LucidLink service configuration (AUTO_CONFIGURE_LUCIDLINK=0)"
+        echo "INFO: LucidLink installed but not configured. End users can configure manually."
+    fi
 
     # Step 8: Verify DCV
     run_ssm "Verifying DCV status" \
