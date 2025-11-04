@@ -53,8 +53,8 @@ try {
     Write-Log "Executing full setup script..."
     Write-Log "========================================="
 
-    # Execute the downloaded script
-    PowerShell -ExecutionPolicy Bypass -File $LocalScript
+    # Execute the downloaded script using dot-sourcing (works better than -File)
+    & PowerShell -ExecutionPolicy Bypass -Command ". '$LocalScript'"
 
     Write-Log "========================================="
     Write-Log "Setup script execution completed"
