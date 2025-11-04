@@ -34,7 +34,7 @@ NC='\033[0m' # No Color
 # Configuration - Update these for your deployment
 INSTANCE_ID="${1:-i-04a97c9efaa7eb3f3}"
 REGION="${2:-us-east-1}"
-SECRET_ARN="arn:aws:secretsmanager:us-east-1:534711626568:secret:ll-win-client/lucidlink/max.lucid-demo/credentials-1iu1Mp"
+SECRET_NAME="ll-win-client/lucidlink/max.lucid-demo/credentials"
 MOUNT_POINT="L:"
 
 # DCV Administrator Password - MUST be provided via environment variable
@@ -175,14 +175,26 @@ main() {
         'Write-Host "Starting DCV services..."' \
         'Start-Sleep -Seconds 10' \
         'Start-Service -Name DcvServer -ErrorAction SilentlyContinue' \
-        'Start-Sleep -Seconds 10' \
+        'Start-Sleep -Seconds 15' \
         'Write-Host "Ensuring DCV session is owned by Administrator..."' \
-        '# Close any existing sessions (DCV auto-creates a SYSTEM session on startup)' \
-        '& "C:\Program Files\NICE\DCV\Server\bin\dcv" close-session console -ErrorAction SilentlyContinue 2>&1 | Out-Null' \
-        'Start-Sleep -Seconds 2' \
+        '# Check if console session exists and close it if needed' \
+        '$dcvExe = "C:\Program Files\NICE\DCV\Server\bin\dcv.exe"' \
+        '$existingSessions = & $dcvExe list-sessions 2>&1 | Out-String' \
+        'if ($existingSessions -match "console") {' \
+        '    Write-Host "Found existing console session, closing it..."' \
+        '    & $dcvExe close-session console 2>&1 | Out-Null' \
+        '    Start-Sleep -Seconds 3' \
+        '} else {' \
+        '    Write-Host "No existing console session found"' \
+        '}' \
         '# Create new session with Administrator owner' \
         'Write-Host "Creating DCV console session with Administrator owner..."' \
-        '& "C:\Program Files\NICE\DCV\Server\bin\dcv" create-session --type=console --owner=Administrator console 2>&1' \
+        'try {' \
+        '    & $dcvExe create-session --type=console --owner=Administrator console 2>&1 | Out-String | Write-Host' \
+        '    Write-Host "DCV session created successfully"' \
+        '} catch {' \
+        '    Write-Host "Warning: DCV session creation returned: $_"' \
+        '}' \
         'Write-Host "DCV Server configured with password: $adminPassword"'
 
     # Step 3: Install Chrome
@@ -283,7 +295,7 @@ main() {
 
     # Step 7: Configure LucidLink as Windows Service
     run_ssm "Configuring LucidLink filespace" \
-        '$secretArn = "'"$SECRET_ARN"'"' \
+        '$secretName = "'"$SECRET_NAME"'"' \
         '$region = "'"$REGION"'"' \
         '$mountPoint = "'"$MOUNT_POINT"'"' \
         '$lucidPath = "C:\Program Files\LucidLink\bin\lucid.exe"' \
@@ -296,15 +308,26 @@ main() {
         '    Start-Sleep -Seconds 5' \
         '    Write-Host "Retrieving credentials from Secrets Manager..."' \
         '    $awsPath = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"' \
-        '    $secretJson = & $awsPath secretsmanager get-secret-value --secret-id $secretArn --region $region --query SecretString --output text' \
-        '    $creds = $secretJson | ConvertFrom-Json' \
-        '    Write-Host "Linking to filespace: $($creds.domain)"' \
-        '    & $lucidPath link --fs $creds.domain --user $creds.username --password $creds.password --mount-point $mountPoint' \
-        '    Start-Sleep -Seconds 10' \
-        '    if (Test-Path $mountPoint) {' \
-        '        Write-Host "SUCCESS: Filespace mounted to $mountPoint"' \
-        '    } else {' \
-        '        Write-Host "WARNING: Mount point not yet accessible (may need more time)"' \
+        '    try {' \
+        '        $secretJson = & $awsPath secretsmanager get-secret-value --secret-id $secretName --region $region --query SecretString --output text 2>&1' \
+        '        if ($LASTEXITCODE -ne 0) {' \
+        '            Write-Host "ERROR: Failed to retrieve secret from Secrets Manager"' \
+        '            Write-Host "Secret name: $secretName"' \
+        '            Write-Host "Error: $secretJson"' \
+        '            exit 1' \
+        '        }' \
+        '        $creds = $secretJson | ConvertFrom-Json' \
+        '        Write-Host "Linking to filespace: $($creds.domain)"' \
+        '        Write-Host "Username: $($creds.username)"' \
+        '        & $lucidPath link --fs $creds.domain --user $creds.username --password $creds.password --mount-point $mountPoint' \
+        '        Start-Sleep -Seconds 10' \
+        '        if (Test-Path $mountPoint) {' \
+        '            Write-Host "SUCCESS: Filespace mounted to $mountPoint"' \
+        '        } else {' \
+        '            Write-Host "WARNING: Mount point not yet accessible (may need more time)"' \
+        '        }' \
+        '    } catch {' \
+        '        Write-Host "ERROR: Exception during LucidLink configuration: $_"' \
         '    }' \
         '} else {' \
         '    Write-Host "ERROR: LucidLink not installed"' \
