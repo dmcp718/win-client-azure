@@ -175,8 +175,13 @@ main() {
         'Write-Host "Starting DCV services..."' \
         'Start-Sleep -Seconds 10' \
         'Start-Service -Name DcvServer -ErrorAction SilentlyContinue' \
-        'Start-Sleep -Seconds 5' \
-        'Write-Host "Creating DCV console session with Administrator..."' \
+        'Start-Sleep -Seconds 10' \
+        'Write-Host "Ensuring DCV session is owned by Administrator..."' \
+        '# Close any existing sessions (DCV auto-creates a SYSTEM session on startup)' \
+        '& "C:\Program Files\NICE\DCV\Server\bin\dcv" close-session console -ErrorAction SilentlyContinue 2>&1 | Out-Null' \
+        'Start-Sleep -Seconds 2' \
+        '# Create new session with Administrator owner' \
+        'Write-Host "Creating DCV console session with Administrator owner..."' \
         '& "C:\Program Files\NICE\DCV\Server\bin\dcv" create-session --type=console --owner=Administrator console 2>&1' \
         'Write-Host "DCV Server configured with password: $adminPassword"'
 
@@ -210,26 +215,25 @@ main() {
         echo -e "  ${YELLOW}Skipping VLC installation (disabled)${NC}"
     fi
 
-    # Step 5: Install Adobe Creative Cloud Desktop (if enabled)
+    # Step 5: Download Adobe Creative Cloud Desktop installer (if enabled)
+    # NOTE: Adobe CC cannot be installed silently - it requires interactive login with Adobe account
+    # This step downloads the installer to the Administrator's Desktop for manual installation
     if [ "$INSTALL_ADOBE_CC" = "1" ]; then
-        run_ssm "Installing Adobe Creative Cloud Desktop" \
-            'Write-Host "Downloading Adobe Creative Cloud..."' \
-            '$adobeUrl = "https://ccmdl.adobe.com/AdobeProducts/KCCC/CCD/5_8/win64/ACCCx5_8_0_559.zip"' \
-            '$adobeZip = "C:\Temp\adobe-cc.zip"' \
-            '$adobeDir = "C:\Temp\adobe-cc"' \
-            'Invoke-WebRequest -Uri $adobeUrl -OutFile $adobeZip -TimeoutSec 600' \
-            'Write-Host "Extracting Adobe Creative Cloud..."' \
-            'Expand-Archive -Path $adobeZip -DestinationPath $adobeDir -Force' \
-            'Write-Host "Installing Adobe Creative Cloud Desktop..."' \
-            '$setupPath = Get-ChildItem -Path $adobeDir -Recurse -Filter "Set-up.exe" | Select-Object -First 1' \
-            'if ($setupPath) {' \
-            '    Start-Process $setupPath.FullName -ArgumentList "--silent" -Wait' \
-            '    Write-Host "Adobe Creative Cloud Desktop installed"' \
-            '} else {' \
-            '    Write-Host "WARNING: Adobe setup.exe not found"' \
-            '}'
+        run_ssm "Downloading Adobe Creative Cloud installer" \
+            'Write-Host "Downloading Adobe Creative Cloud installer..."' \
+            '$adobeUrl = "https://lucidlink-se-tools.s3.us-east-1.amazonaws.com/adobe-cc-win/Creative_Cloud_Set-Up.exe"' \
+            '$desktopPath = "C:\Users\Administrator\Desktop"' \
+            'New-Item -ItemType Directory -Path $desktopPath -Force | Out-Null' \
+            '$installerPath = Join-Path $desktopPath "Adobe_Creative_Cloud_Installer.exe"' \
+            '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12' \
+            'Invoke-WebRequest -Uri $adobeUrl -OutFile $installerPath -TimeoutSec 300 -UseBasicParsing' \
+            '$fileSize = (Get-Item $installerPath).Length / 1MB' \
+            'Write-Host "Downloaded Adobe CC installer to Desktop: $([math]::Round($fileSize, 2)) MB"' \
+            'Write-Host "Location: $installerPath"' \
+            'Write-Host "NOTE: Adobe Creative Cloud requires manual installation with Adobe account credentials"' \
+            'Write-Host "Double-click the installer on the Desktop to complete installation"'
     else
-        echo -e "  ${YELLOW}Skipping Adobe Creative Cloud installation (disabled)${NC}"
+        echo -e "  ${YELLOW}Skipping Adobe Creative Cloud download (disabled)${NC}"
     fi
 
     # Step 5b: Install 7-Zip (if enabled)
@@ -340,14 +344,15 @@ main() {
     echo "  ✓ Google Chrome"
     echo "  ✓ LucidLink (mounted to $MOUNT_POINT)"
     [ "$INSTALL_VLC" = "1" ] && echo "  ✓ VLC Media Player"
-    [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  ✓ Adobe Creative Cloud Desktop"
+    [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  📦 Adobe Creative Cloud installer (on Desktop - requires manual install)"
     [ "$INSTALL_7ZIP" = "1" ] && echo "  ✓ 7-Zip"
     [ "$INSTALL_NOTEPAD_PP" = "1" ] && echo "  ✓ Notepad++"
     echo
     echo "Next steps:"
     echo "  1. Connect via DCV client or browser"
     echo "  2. Verify LucidLink mount point: $MOUNT_POINT"
-    [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  3. Sign in to Adobe Creative Cloud Desktop"
+    [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  3. Double-click Adobe_Creative_Cloud_Installer.exe on Desktop to install"
+    [ "$INSTALL_ADOBE_CC" = "1" ] && echo "     (requires Adobe account login)"
     echo "  4. Password is saved in ~/Desktop/LucidLink-DCV/PASSWORDS.txt"
 }
 
