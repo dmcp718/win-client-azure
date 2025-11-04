@@ -14,10 +14,11 @@ Deploy GPU-accelerated Windows Server 2022 instances on AWS in minutes:
 - ✅ **One command deployment** - Interactive TUI guides you through setup
 - ✅ **GPU-accelerated graphics** - NVIDIA T4 GPUs for Adobe Creative Cloud
 - ✅ **Amazon DCV remote access** - Superior graphics performance over RDP
-- ✅ **LucidLink auto-configured** - Client installed and mounted automatically
+- ✅ **Flexible LucidLink setup** - Auto-configure or install for manual setup
 - ✅ **Automated password management** - No SSH keys needed (SSM-based)
 - ✅ **Multi-instance support** - Deploy 1-10 instances simultaneously
 - ✅ **Complete automation** - Terraform + Python TUI handles everything
+- ✅ **Robust deployment** - Improved instance readiness checks prevent early failures
 
 **Deployment time**: 10-15 minutes | **Access via**: Amazon DCV (port 8443)
 
@@ -158,17 +159,20 @@ uv run ll-win-client-aws.py --help
 ### Automation
 - **Interactive TUI** for configuration with Rich library
 - **Terraform** for Infrastructure as Code
-- **S3-Based Userdata Architecture** - Bypasses AWS 16KB userdata limit
-  - Minimal bootstrap script (~1.5KB) downloads full setup from S3
-  - No size restrictions on initialization scripts
-  - Maintains all documentation and comments
-- **Automated LucidLink installation** via PowerShell userdata
-- **AWS Secrets Manager** for credential storage
+- **AWS SSM Deployment** - Reliable remote script execution
+  - Robust instance readiness checks (EC2 state + SSM agent + initialization buffer)
+  - Prevents premature deployment failures
+  - ~5 minute wait ensures Windows is fully initialized
+- **Flexible LucidLink Configuration**
+  - **Auto-configure mode** (default): Installs as Windows service, auto-mounts filespace
+  - **Manual mode**: Installs client only, users configure credentials themselves
+  - Credentials stored in AWS Secrets Manager (auto mode)
 - **CloudWatch Logs** for instance monitoring
-- **Optional Application Framework** - Install additional software automatically
-  - Adobe Creative Cloud
-  - 7-Zip, VLC
-  - Easy to customize for your own applications
+- **Modular Optional Software Framework**
+  - **Enabled by default**: VLC Media Player, Adobe Creative Cloud
+  - **Available**: 7-Zip, Notepad++
+  - **Control via environment variables**: `INSTALL_VLC=0`, `INSTALL_ADOBE_CC=0`, etc.
+  - Easy to add custom applications
 
 ### Remote Access
 - **Amazon DCV** (primary) - GPU-accelerated remote desktop
@@ -226,6 +230,7 @@ Configuration stored at: `~/.ll-win-client/config.json`
 - AWS region and credentials (base64-encoded)
 - VPC CIDR block
 - LucidLink credentials (base64-encoded)
+- LucidLink auto-configuration mode (yes/no)
 - Instance preferences (type, count, volume size)
 
 **Security Note**: File contains base64-encoded credentials (basic obfuscation, not encryption). Keep secure.
@@ -302,6 +307,11 @@ ll-win-client-aws/
 │   ├── IAM-SETUP.md              # IAM user setup guide
 │   ├── DEPLOYMENT-GUIDE.md       # Complete deployment walkthrough
 │   └── TROUBLESHOOTING.md        # All troubleshooting solutions
+│
+├── deployment/                    # Production SSM deployment scripts
+│   ├── deploy-windows-client.sh  # Main deployment script (DCV, LucidLink, software)
+│   ├── README.md                 # Deployment documentation
+│   └── terraform-provisioner.tf  # Terraform integration example
 │
 ├── iam/                           # IAM user configuration
 │   ├── setup.sh                  # Automated IAM setup
@@ -392,64 +402,76 @@ terraform apply   # Apply changes
 terraform destroy # Remove all resources
 ```
 
-### Install Optional Applications
-The deployment includes a flexible framework for installing additional applications automatically during Windows initialization.
+### LucidLink Configuration Modes
 
-**Available Applications** (all commented out by default):
-- Adobe Creative Cloud (for graphics/video work)
-- 7-Zip, VLC Media Player
-
-**To Enable Applications:**
-
-1. Edit the userdata script:
-   ```bash
-   nano terraform/clients/templates/windows-userdata.ps1
-   ```
-
-2. Find the "OPTIONAL APPLICATIONS" section (around line 295)
-
-3. Uncomment the applications you want. For example, to install Adobe Creative Cloud:
-   ```powershell
-   # Change FROM:
-   # Install-Application `
-   #     -Name "Adobe Creative Cloud" `
-   #     -WingetId "Adobe.CreativeCloud" `
-   #     -ChocoPackage "adobe-creative-cloud"
-
-   # Change TO:
-   Install-Application `
-       -Name "Adobe Creative Cloud" `
-       -WingetId "Adobe.CreativeCloud" `
-       -ChocoPackage "adobe-creative-cloud"
-   ```
-
-4. Deploy new instances - applications install automatically during initialization
-
-**3-Tier Installation Method:**
-1. **Winget** (native to Windows Server 2022) - tried first
-2. **Chocolatey** - automatic fallback if Winget fails
-3. **Direct Download** - last resort (requires URL)
-
-**Add Your Own Applications:**
-
-Follow the template at the bottom of the optional applications section:
-
-```powershell
-Install-Application `
-    -Name "Your Application Name" `
-    -WingetId "Publisher.AppName" `
-    -ChocoPackage "package-name" `
-    -DirectUrl "https://example.com/installer.exe" `
-    -DirectArgs "/S /SILENT"
+During TUI configuration (Step 4), you'll be asked:
+```
+Auto-configure LucidLink as Windows service and connect to filespace? [yes/no] (yes):
 ```
 
-**Find Package IDs:**
-- **Winget**: Run `winget search "app name"` on a Windows machine
-- **Chocolatey**: Visit https://community.chocolatey.org/packages
+**Auto-configure mode (yes)** - Default, recommended for demos and single-user scenarios:
+- ✅ Installs LucidLink client
+- ✅ Configures as Windows service
+- ✅ Retrieves credentials from AWS Secrets Manager
+- ✅ Auto-mounts filespace to configured drive letter (e.g., L:)
+- ✅ Filespace ready to use immediately after login
+
+**Manual mode (no)** - For multi-user or custom credential scenarios:
+- ✅ Installs LucidLink client
+- ❌ Does NOT configure service or mount
+- 👤 End users configure credentials themselves via LucidLink UI
+- Use cases: Multiple users with different credentials, manual preference
+
+### Install Optional Applications
+
+The deployment includes a **modular optional software framework** with environment variable control.
+
+**Default Configuration** (what gets installed):
+- ✅ **Core Software** (always installed):
+  - AWS CLI
+  - Amazon DCV Server (remote desktop)
+  - Google Chrome
+  - LucidLink client
+- ✅ **Optional Software** (enabled by default):
+  - VLC Media Player
+  - Adobe Creative Cloud Desktop
+- 📦 **Available** (disabled by default):
+  - 7-Zip
+  - Notepad++
+
+**Control Optional Software via Environment Variables:**
+
+```bash
+# Disable default optional software
+INSTALL_VLC=0 INSTALL_ADOBE_CC=0 ./deployment/deploy-windows-client.sh i-xxx us-east-1
+
+# Enable additional tools
+INSTALL_7ZIP=1 INSTALL_NOTEPAD_PP=1 ./deployment/deploy-windows-client.sh i-xxx us-east-1
+
+# Mix and match
+INSTALL_VLC=0 INSTALL_7ZIP=1 ./deployment/deploy-windows-client.sh i-xxx us-east-1
+```
+
+**Note**: The TUI automatically calls the deployment script. To customize software, you'll need to:
+1. Deploy with TUI (gets core + defaults)
+2. Manually run deployment script with custom env vars to adjust software, OR
+3. Modify `ll-win-client-aws.py` to set environment variables based on user prompts
+
+**Add Your Own Software:**
+
+Edit `deployment/deploy-windows-client.sh` and add to the optional software section:
+
+```bash
+# Add new optional software controlled by environment variable
+if [ "${INSTALL_YOUR_APP:-0}" = "1" ]; then
+    run_ssm "Installing Your Application" \
+        'choco install your-package -y'
+fi
+```
 
 **Installation Logs:**
-- Check `C:\lucidlink-init.log` on the Windows instance for installation status
-- Each application logs its installation progress
+- CloudWatch: `/aws/ec2/ll-win-client`
+- SSM command output available in AWS Console
 
 ---
 
@@ -638,4 +660,21 @@ MIT License - See LICENSE file for details.
 - **AWS DCV Client**: https://download.nice-dcv.com/
 - **NVIDIA AMI**: https://aws.amazon.com/marketplace/pp/prodview-f4reygwmtxipu
 
-**Last Updated**: 2025-11-03
+**Last Updated**: 2025-11-04
+
+---
+
+## Recent Updates
+
+**2025-11-04:**
+- ✅ Added optional LucidLink auto-configuration mode
+  - Choose between auto-configure (service + mount) or manual setup during TUI configuration
+  - Default: auto-configure (maintains existing behavior)
+- ✅ Improved deployment reliability with robust instance readiness checks
+  - Now waits for both EC2 state=running AND SSM agent online
+  - Added 60-second buffer after checks pass for Windows initialization
+  - Prevents "InvalidInstanceId... not in valid state" errors
+- ✅ Enhanced modular optional software framework
+  - VLC and Adobe CC enabled by default
+  - 7-Zip and Notepad++ available (disabled by default)
+  - Control via environment variables: `INSTALL_VLC=0`, `INSTALL_ADOBE_CC=0`, etc.
