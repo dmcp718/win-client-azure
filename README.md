@@ -409,6 +409,55 @@ terraform apply   # Apply changes
 terraform destroy # Remove all resources
 ```
 
+### Enable NVIDIA AMI (Optional)
+
+By default, the deployment uses **standard Windows Server 2022 AMI** and GPU drivers install via Windows Update. To use the **NVIDIA RTX Virtual Workstation AMI** with pre-installed drivers:
+
+**Prerequisites:**
+1. Subscribe to NVIDIA AMI (one-time, free): https://aws.amazon.com/marketplace/pp/prodview-f4reygwmtxipu
+2. Click "Continue to Subscribe" → Accept terms
+
+**Enable NVIDIA AMI:**
+
+**Option 1: Edit `terraform/clients/ami-override.tfvars`** (recommended)
+```bash
+# Edit the file
+nano terraform/clients/ami-override.tfvars
+
+# Change from:
+use_nvidia_ami = false
+
+# Change to:
+use_nvidia_ami = true
+```
+
+**Option 2: Edit generated `terraform.tfvars`**
+```bash
+# After running TUI configuration, edit:
+nano terraform/clients/terraform.tfvars
+
+# Add or change:
+use_nvidia_ami = true
+```
+
+**Deploy:**
+```bash
+# The TUI automatically uses these settings when deploying
+uv run ll-win-client-aws.py
+# Choose Option 3: Deploy Client Instances
+```
+
+**Benefits of NVIDIA AMI:**
+- ✅ Pre-installed NVIDIA GRID/RTX drivers
+- ✅ Faster initial setup (no driver download/install)
+- ✅ Tested and certified driver version
+- ✅ Recommended for production graphics workloads
+
+**Standard AMI works fine for:**
+- ⚡ Testing and development
+- ⚡ Basic graphics workloads
+- ⚡ When Marketplace subscription isn't feasible
+
 ### LucidLink Configuration Modes
 
 During TUI configuration (Step 4), you'll be asked:
