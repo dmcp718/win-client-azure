@@ -22,7 +22,19 @@ After extensive testing, we found that:
 ./deploy-windows-client.sh i-04a97c9efaa7eb3f3 us-east-1
 ```
 
-### Controlling Optional Software
+### Usage
+
+**Recommended:** Use the `ll-win-client-aws.py` TUI which handles password generation automatically.
+
+**Manual Usage:** You must provide the DCV Administrator password:
+
+```bash
+DCV_ADMIN_PASSWORD="YourPassword" ./deploy-windows-client.sh i-xxx us-east-1
+```
+
+**Note:** The `ll-win-client-aws.py` script generates passwords and saves them to `~/Desktop/LucidLink-DCV/PASSWORDS.txt`
+
+#### Controlling Optional Software
 
 Use environment variables to enable/disable optional software:
 
@@ -38,6 +50,9 @@ INSTALL_7ZIP=1 INSTALL_NOTEPAD_PP=1 ./deploy-windows-client.sh i-xxx us-east-1
 
 # Install only core software (no optional apps)
 INSTALL_VLC=0 INSTALL_ADOBE_CC=0 ./deploy-windows-client.sh i-xxx us-east-1
+
+# Combine password and software options
+DCV_ADMIN_PASSWORD="SecurePass!" INSTALL_7ZIP=1 ./deploy-windows-client.sh i-xxx us-east-1
 ```
 
 ### What Gets Installed
