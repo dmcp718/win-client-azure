@@ -190,24 +190,29 @@ class LLWinClientAWSSetup:
 
         return (len(errors) == 0, errors)
 
-    def validate_aws_credentials(self) -> bool:
-        """Validate AWS credentials by making a simple API call"""
+    def validate_azure_credentials(self) -> bool:
+        """Validate Azure credentials by checking az cli login status"""
         try:
-            import boto3
+            # Check if az cli is installed
+            if not shutil.which('az'):
+                logger.error("Azure CLI (az) not found")
+                return False
 
-            # Use credentials from config if available
-            session_kwargs = {'region_name': self.config.get('region', 'us-east-1')}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
+            # Check if logged in by trying to get account info
+            result = subprocess.run(
+                ['az', 'account', 'show'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
 
-            # Try to list regions as a simple test
-            ec2 = boto3.client('ec2', **session_kwargs)
-            ec2.describe_regions()
-            return True
+            if result.returncode == 0:
+                return True
+            else:
+                logger.error(f"Azure login check failed: {result.stderr}")
+                return False
         except Exception as e:
-            logger.error(f"AWS credentials validation failed: {e}")
+            logger.error(f"Azure credentials validation failed: {e}")
             return False
 
     def fetch_ec2_instance_types(self, region: str = None) -> set:
@@ -430,16 +435,17 @@ class LLWinClientAWSSetup:
 
         checks_passed = True
 
-        # Check 1: AWS credentials valid
-        console.print("1. Validating AWS credentials...")
-        if self.config.get('aws_access_key_id'):
-            if not self.validate_aws_credentials():
-                console.print(f"  [{self.colors['error']}]✗ AWS credentials invalid[/]")
-                checks_passed = False
-            else:
-                console.print(f"  [{self.colors['success']}]✓ AWS credentials valid[/]")
+        # Check 1: Azure credentials valid
+        console.print("1. Validating Azure credentials...")
+        if not shutil.which('az'):
+            console.print(f"  [{self.colors['error']}]✗ Azure CLI not installed[/]")
+            console.print("  Install from: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli")
+            checks_passed = False
+        elif not self.validate_azure_credentials():
+            console.print(f"  [{self.colors['warning']}]⚠ Not logged in to Azure (run 'az login')[/]")
+            checks_passed = False
         else:
-            console.print(f"  [{self.colors['warning']}]⚠ AWS credentials not configured yet[/]")
+            console.print(f"  [{self.colors['success']}]✓ Azure credentials valid[/]")
 
         # Check 2: Terraform installed
         console.print("\n2. Checking Terraform installation...")
@@ -784,23 +790,63 @@ ssh_key_name = "{config.get('ssh_key_name', '')}"
             console.print(f"[{self.colors['error']}]Failed to write Terraform files: {e}[/]")
             return False
 
+    def ensure_terraform_initialized(self) -> bool:
+        """Ensure terraform is initialized before running commands"""
+        lock_file = self.terraform_dir / ".terraform.lock.hcl"
+        terraform_dir = self.terraform_dir / ".terraform"
+
+        # If lock file and .terraform directory exist, assume it's initialized
+        if lock_file.exists() and terraform_dir.exists():
+            return True
+
+        # Need to initialize
+        console.print(f"[{self.colors['info']}]ℹ Initializing Terraform...[/]")
+        success, _ = self.run_terraform_init()
+        return success
+
+    def run_terraform_init(self) -> Tuple[bool, str]:
+        """Run terraform init without checking if already initialized"""
+        env = os.environ.copy()
+
+        # Set TMPDIR to writable location
+        tmpdir = '/tmp/terraform-tmp'
+        os.makedirs(tmpdir, exist_ok=True)
+        env['TMPDIR'] = tmpdir
+
+        try:
+            result = subprocess.run(
+                ['terraform', 'init'],
+                cwd=str(self.terraform_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if result.returncode == 0:
+                console.print(f"[{self.colors['success']}]✓ Terraform initialized[/]")
+                return True, result.stdout
+            else:
+                console.print(f"[{self.colors['error']}]✗ Terraform init failed[/]")
+                logger.error(f"Terraform init failed: {result.stderr}")
+                return False, result.stderr
+        except Exception as e:
+            logger.error(f"Terraform init failed: {e}")
+            console.print(f"[{self.colors['error']}]Terraform init failed: {e}[/]")
+            return False, str(e)
+
     def run_terraform_command(self, command: str, auto_approve: bool = False) -> Tuple[bool, str]:
         """Execute a Terraform command with progress tracking"""
+        # Ensure terraform is initialized (except for init command itself)
+        if command != 'init' and not self.ensure_terraform_initialized():
+            return False, "Terraform initialization failed"
+
         env = os.environ.copy()
 
         # Set TMPDIR to writable location (fixes macOS permission issues)
         tmpdir = '/tmp/terraform-tmp'
         os.makedirs(tmpdir, exist_ok=True)
         env['TMPDIR'] = tmpdir
-
-        # Set AWS credentials from config
-        if self.config.get('aws_access_key_id'):
-            env['AWS_ACCESS_KEY_ID'] = self.config['aws_access_key_id']
-        if self.config.get('aws_secret_access_key'):
-            env['AWS_SECRET_ACCESS_KEY'] = self.config['aws_secret_access_key']
-        if self.config.get('region'):
-            env['AWS_REGION'] = self.config['region']
-            env['AWS_DEFAULT_REGION'] = self.config['region']
 
         # Check if VM image override file exists
         image_override_file = self.terraform_dir / "image-override.tfvars"
