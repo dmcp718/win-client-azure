@@ -1885,7 +1885,7 @@ preferred-video-codec=h264
 
         console.print(Panel.fit(
             "[bold]Regenerate Connection Files[/bold]\n"
-            "This will create fresh DCV files on your Desktop and set passwords automatically",
+            "This will create fresh RDP files on your Desktop and set passwords automatically",
             border_style="blue"
         ))
         console.print()
@@ -2298,7 +2298,7 @@ preferred-video-codec=h264
             console.print("2. View Configuration")
             console.print("3. Deploy Client Instances")
             console.print("4. View Deployment Status")
-            console.print("5. Regenerate Connection Files (DCV)")
+            console.print("5. Regenerate Connection Files (RDP)")
             console.print("6. Stop All Instances")
             console.print("7. Start All Instances")
             console.print("8. Destroy Client Instances")
