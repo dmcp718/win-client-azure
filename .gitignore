@@ -80,3 +80,7 @@ LUCIDLINK-*.md
 *.dcv
 *.rdp
 PASSWORDS.txt
+
+# Claude Code project instructions (local only)
+.claude/
+CLAUDE.md
