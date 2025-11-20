@@ -802,9 +802,9 @@ ssh_key_name = "{config.get('ssh_key_name', '')}"
             env['AWS_REGION'] = self.config['region']
             env['AWS_DEFAULT_REGION'] = self.config['region']
 
-        # Check if AMI override file exists
-        ami_override_file = self.terraform_dir / "ami-override.tfvars"
-        use_ami_override = ami_override_file.exists()
+        # Check if VM image override file exists
+        image_override_file = self.terraform_dir / "image-override.tfvars"
+        use_image_override = image_override_file.exists()
 
         # Build command
         if command == 'init':
@@ -813,27 +813,27 @@ ssh_key_name = "{config.get('ssh_key_name', '')}"
             cmd = ['terraform', 'validate']
         elif command == 'plan':
             cmd = ['terraform', 'plan']
-            if use_ami_override:
-                cmd.extend(['-var-file=ami-override.tfvars'])
+            if use_image_override:
+                cmd.extend(['-var-file=image-override.tfvars'])
         elif command == 'apply':
             cmd = ['terraform', 'apply']
-            if use_ami_override:
-                cmd.extend(['-var-file=ami-override.tfvars'])
+            if use_image_override:
+                cmd.extend(['-var-file=image-override.tfvars'])
             if auto_approve:
                 cmd.append('-auto-approve')
         elif command == 'destroy':
             cmd = ['terraform', 'destroy']
-            if use_ami_override:
-                cmd.extend(['-var-file=ami-override.tfvars'])
+            if use_image_override:
+                cmd.extend(['-var-file=image-override.tfvars'])
             if auto_approve:
                 cmd.append('-auto-approve')
         else:
             return False, f"Unknown command: {command}"
 
-        # Inform user if using AMI override
-        if use_ami_override and command in ['plan', 'apply', 'destroy']:
-            console.print(f"[{self.colors['info']}]ℹ Using ami-override.tfvars (Standard Windows AMI)[/]")
-            console.print(f"[dim]To use NVIDIA AMI, delete or rename terraform/azure/ami-override.tfvars[/dim]")
+        # Inform user if using image override
+        if use_image_override and command in ['plan', 'apply', 'destroy']:
+            console.print(f"[{self.colors['info']}]ℹ Using image-override.tfvars (Standard Windows Image)[/]")
+            console.print(f"[dim]To use NVIDIA VM Image, delete or rename terraform/azure/image-override.tfvars[/dim]")
 
         try:
             with Progress(
