@@ -1687,14 +1687,14 @@ preferred-video-codec=h264
             return
 
         # Extract client information
-        instance_ids = outputs.get('instance_ids', [])
+        vm_names = outputs.get('vm_names', outputs.get('instance_ids', []))
         private_ips = outputs.get('private_ips', [])
         public_ips = outputs.get('public_ips', [])
         filespace_domain = outputs.get('filespace_domain', 'Not configured')
         mount_point = outputs.get('mount_point', 'L:')
 
-        if not instance_ids:
-            console.print(f"[{self.colors['warning']}]No client instances found.[/]")
+        if not vm_names:
+            console.print(f"[{self.colors['warning']}]No VMs found.[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
@@ -1703,98 +1703,95 @@ preferred-video-codec=h264
         summary_table.add_column("Property", style="cyan", no_wrap=True)
         summary_table.add_column("Value", style="white")
 
-        summary_table.add_row("Total Instances", str(len(instance_ids)))
+        summary_table.add_row("Total VMs", str(len(vm_names)))
         summary_table.add_row("Filespace Domain", filespace_domain)
         summary_table.add_row("Mount Point", mount_point)
-        summary_table.add_row("Region", self.config.get('region', 'unknown'))
-        summary_table.add_row("VPC CIDR", self.config.get('vpc_cidr', 'unknown'))
+        summary_table.add_row("Region", self.config.get('location', self.config.get('region', 'unknown')))
+        summary_table.add_row("Resource Group", outputs.get('resource_group_name', 'unknown'))
 
         console.print(summary_table)
         console.print()
 
         # Create instances table
-        instances_table = Table(title="Client Instances", box=box.ROUNDED, border_style="green")
+        instances_table = Table(title="Windows 11 VMs", box=box.ROUNDED, border_style="green")
         instances_table.add_column("Index", style="cyan", no_wrap=True)
-        instances_table.add_column("Instance ID", style="white")
+        instances_table.add_column("VM Name", style="white")
         instances_table.add_column("Private IP", style="white")
         instances_table.add_column("Public IP", style="white")
-        instances_table.add_column("EC2 Status", style="green")
-        instances_table.add_column("SSM Status", style="yellow")
-        instances_table.add_column("DCV Status", style="magenta")
+        instances_table.add_column("VM Status", style="green")
+        instances_table.add_column("RDP Access", style="magenta")
 
-        # Check instance status if boto3 available
-        instance_statuses = {}
-        ssm_statuses = {}
+        # Check VM status using Azure CLI
+        vm_statuses = {}
+        rdp_statuses = {}
+        resource_group = outputs.get('resource_group_name', 'll-win-client-rg')
+
         try:
-            import boto3
-            session_kwargs = {'region_name': self.config.get('region', 'us-east-1')}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
+            import json
+            import subprocess
 
-            ec2 = boto3.client('ec2', **session_kwargs)
-
-            # Get EC2 instance statuses
-            if instance_ids:
-                ec2_response = ec2.describe_instances(InstanceIds=instance_ids)
-                for reservation in ec2_response['Reservations']:
-                    for instance in reservation['Instances']:
-                        instance_statuses[instance['InstanceId']] = instance['State']['Name']
-
-            # Get SSM agent statuses
-            for instance_id in instance_ids:
-                ssm_status = self.check_ssm_agent_status(instance_id)
-                ssm_statuses[instance_id] = ssm_status
+            # Get VM statuses using Azure CLI
+            for vm_name in vm_names:
+                try:
+                    result = subprocess.run(
+                        ['az', 'vm', 'get-instance-view',
+                         '--name', vm_name,
+                         '--resource-group', resource_group,
+                         '--query', 'instanceView.statuses[?starts_with(code, `PowerState`)].displayStatus',
+                         '--output', 'json'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        statuses = json.loads(result.stdout)
+                        if statuses:
+                            # Extract status like "VM running" -> "running"
+                            vm_statuses[vm_name] = statuses[0].replace('VM ', '').lower()
+                except:
+                    pass
         except:
-            # If boto3 not available or API fails, show unknown status
+            # If Azure CLI not available or fails, show unknown status
             pass
 
-        for idx, instance_id in enumerate(instance_ids):
+        for idx, vm_name in enumerate(vm_names):
             private_ip = private_ips[idx] if idx < len(private_ips) else "N/A"
             public_ip = public_ips[idx] if idx < len(public_ips) else "N/A"
 
-            # Get EC2 status
-            status = instance_statuses.get(instance_id, "unknown")
+            # Get VM status
+            status = vm_statuses.get(vm_name, "unknown")
             if status == "running":
-                status = "[green]running[/green]"
-            elif status == "stopped":
-                status = "[yellow]stopped[/yellow]"
-            elif status == "terminated":
-                status = "[red]terminated[/red]"
+                status_display = "[green]running[/green]"
+            elif status in ["stopped", "deallocated"]:
+                status_display = "[yellow]stopped[/yellow]"
+            elif status == "starting":
+                status_display = "[cyan]starting[/cyan]"
             else:
-                status = "[dim]unknown[/dim]"
+                status_display = "[dim]unknown[/dim]"
 
-            # Get SSM status
-            ssm_status = ssm_statuses.get(instance_id, "Unknown")
-            if ssm_status == "Online":
-                ssm_status_display = "[green]Online[/green]"
-            elif ssm_status == "NotRegistered":
-                ssm_status_display = "[yellow]Not Registered[/yellow]"
-            elif ssm_status == "ConnectionLost":
-                ssm_status_display = "[red]Connection Lost[/red]"
-            elif ssm_status == "Inactive":
-                ssm_status_display = "[yellow]Inactive[/yellow]"
-            else:
-                ssm_status_display = "[dim]Unknown[/dim]"
-
-            # Get DCV status
-            dcv_status = self.check_dcv_status(public_ip)
-            if dcv_status == "Ready":
-                dcv_status_display = "[green]Ready[/green]"
-            elif dcv_status == "NotReady":
-                dcv_status_display = "[yellow]Not Ready[/yellow]"
-            else:
-                dcv_status_display = "[dim]Unknown[/dim]"
+            # Check RDP accessibility (port 3389)
+            rdp_status_display = "[dim]Unknown[/dim]"
+            if public_ip != "N/A" and status == "running":
+                try:
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(2)
+                    result = sock.connect_ex((public_ip, 3389))
+                    sock.close()
+                    if result == 0:
+                        rdp_status_display = "[green]Ready[/green]"
+                    else:
+                        rdp_status_display = "[yellow]Not Ready[/yellow]"
+                except:
+                    rdp_status_display = "[yellow]Not Ready[/yellow]"
 
             instances_table.add_row(
                 str(idx + 1),
-                instance_id,
+                vm_name,
                 private_ip,
                 public_ip,
-                status,
-                ssm_status_display,
-                dcv_status_display
+                status_display,
+                rdp_status_display
             )
 
         console.print(instances_table)
