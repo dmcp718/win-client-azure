@@ -64,7 +64,7 @@ class LLWinClientAWSSetup:
         self.config_dir = Path.home() / ".ll-win-client"
         self.client_config_file = self.config_dir / "config.json"
         self.instance_types_cache_file = self.config_dir / "ec2-instance-types.json"
-        self.terraform_dir = self.script_dir / "terraform" / "clients"
+        self.terraform_dir = self.script_dir / "terraform" / "azure"
         self.templates_dir = self.terraform_dir / "templates"
 
         # Ensure config directory exists
@@ -833,7 +833,7 @@ ssh_key_name = "{config.get('ssh_key_name', '')}"
         # Inform user if using AMI override
         if use_ami_override and command in ['plan', 'apply', 'destroy']:
             console.print(f"[{self.colors['info']}]ℹ Using ami-override.tfvars (Standard Windows AMI)[/]")
-            console.print(f"[dim]To use NVIDIA AMI, delete or rename terraform/clients/ami-override.tfvars[/dim]")
+            console.print(f"[dim]To use NVIDIA AMI, delete or rename terraform/azure/ami-override.tfvars[/dim]")
 
         try:
             with Progress(
