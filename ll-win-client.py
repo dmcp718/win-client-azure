@@ -157,30 +157,46 @@ class LLWinClientAWSSetup:
             if count < 1 or count > 10:
                 errors.append(f"Instance count must be between 1 and 10: {count}")
 
-        # Validate instance type
-        if 'instance_type' in config:
-            instance_type = config['instance_type']
-            # If we have the valid types list, check against it
-            if self.valid_instance_types:
-                if instance_type not in self.valid_instance_types:
-                    errors.append(f"Invalid instance type: {instance_type}")
-                    errors.append(f"Not available in configured region")
-            # Otherwise use regex validation
-            elif not self.is_valid_instance_type(instance_type):
-                errors.append(f"Invalid instance type format: {instance_type}")
+        # Validate VM size
+        if 'vm_size' in config:
+            vm_size = config['vm_size']
+            # Basic Azure VM size format validation
+            if not vm_size.startswith('Standard_'):
+                errors.append(f"Invalid VM size format: {vm_size}")
 
-        # Validate root volume size
-        if 'root_volume_size' in config:
-            size = config.get('root_volume_size', 0)
-            if size < 30 or size > 1000:
-                errors.append(f"Root volume size must be between 30 and 1000 GB: {size}")
+        # Validate OS disk size
+        if 'os_disk_size_gb' in config:
+            size = config.get('os_disk_size_gb', 0)
+            if size < 30 or size > 4095:
+                errors.append(f"OS disk size must be between 30 and 4095 GB: {size}")
 
-        # Validate VPC CIDR
-        if 'vpc_cidr' in config:
-            cidr = config['vpc_cidr']
+        # Validate data disk size
+        if 'data_disk_size_gb' in config:
+            size = config.get('data_disk_size_gb', 0)
+            if size > 0 and (size < 100 or size > 65536):
+                errors.append(f"Data disk size must be between 100 and 65536 GB: {size}")
+
+        # Validate VNet CIDR
+        if 'vnet_cidr' in config:
+            cidr = config['vnet_cidr']
             # Basic CIDR validation
             if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$', cidr):
-                errors.append(f"Invalid VPC CIDR format: {cidr}")
+                errors.append(f"Invalid VNet CIDR format: {cidr}")
+
+        # Validate Azure location
+        if 'location' in config:
+            location = config['location']
+            if not location:
+                errors.append("Azure location is required")
+
+        # Validate admin credentials
+        if 'admin_username' in config:
+            if not config['admin_username']:
+                errors.append("Admin username is required")
+        if 'admin_password' in config:
+            password = config['admin_password']
+            if len(password) < 8:
+                errors.append("Admin password must be at least 8 characters")
 
         # Validate credentials exist
         if not config.get('filespace_user'):
@@ -512,34 +528,32 @@ class LLWinClientAWSSetup:
         # Load existing values if available
         existing_config = self.load_config()
 
-        # Step 1: AWS Region
-        console.print("[bold cyan]Step 1: AWS Region[/bold cyan]")
-        config['region'] = Prompt.ask(
-            "AWS Region",
-            default=existing_config.get('region', 'us-east-1')
+        # Step 1: Azure Location
+        console.print("[bold cyan]Step 1: Azure Location[/bold cyan]")
+        console.print("[dim]Common locations: eastus, eastus2, westus2, centralus, westeurope[/dim]")
+        config['location'] = Prompt.ask(
+            "Azure Location",
+            default=existing_config.get('location', 'eastus2')
         )
         console.print()
 
-        # Step 2: AWS Credentials
-        console.print("[bold cyan]Step 2: AWS Credentials[/bold cyan]")
-        if existing_config.get('aws_access_key_id'):
-            console.print(f"[dim]Using existing AWS credentials[/dim]")
-            config['aws_access_key_id'] = existing_config['aws_access_key_id']
-            config['aws_secret_access_key'] = existing_config.get('aws_secret_access_key', '')
-
-            if Confirm.ask("Update AWS credentials?", default=False):
-                config['aws_access_key_id'] = Prompt.ask("AWS Access Key ID")
-                config['aws_secret_access_key'] = Prompt.ask("AWS Secret Access Key", password=True)
+        # Step 2: Azure Credentials
+        console.print("[bold cyan]Step 2: Azure Credentials[/bold cyan]")
+        console.print("[dim]Checking Azure CLI login status...[/dim]")
+        if self.validate_azure_credentials():
+            console.print(f"[{self.colors['success']}]✓ Already logged in to Azure[/]")
         else:
-            config['aws_access_key_id'] = Prompt.ask("AWS Access Key ID")
-            config['aws_secret_access_key'] = Prompt.ask("AWS Secret Access Key", password=True)
+            console.print(f"[{self.colors['warning']}]⚠ Not logged in to Azure[/]")
+            console.print("[dim]Please run 'az login' before continuing[/dim]")
+            if not Confirm.ask("Continue anyway?", default=False):
+                return None
         console.print()
 
-        # Step 3: VPC Configuration
-        console.print("[bold cyan]Step 3: VPC Configuration[/bold cyan]")
-        config['vpc_cidr'] = Prompt.ask(
-            "VPC CIDR Block",
-            default=existing_config.get('vpc_cidr', '10.0.0.0/16')
+        # Step 3: Virtual Network Configuration
+        console.print("[bold cyan]Step 3: Virtual Network Configuration[/bold cyan]")
+        config['vnet_cidr'] = Prompt.ask(
+            "VNet CIDR Block",
+            default=existing_config.get('vnet_cidr', '10.0.0.0/16')
         )
         console.print()
 
@@ -573,23 +587,28 @@ class LLWinClientAWSSetup:
             console.print(f"  [{self.colors['info']}]ℹ LucidLink will be installed but not configured. End users will need to configure and connect manually.[/]")
         console.print()
 
-        # Step 5: Instance Configuration
-        console.print("[bold cyan]Step 5: Instance Configuration[/bold cyan]")
+        # Step 5: VM Configuration
+        console.print("[bold cyan]Step 5: VM Configuration[/bold cyan]")
 
-        # Fetch GPU instance types dynamically from AWS
-        gpu_instance_types = self.fetch_gpu_instance_types(config.get('region'))
+        # Use fallback GPU instances (Azure VM sizes)
+        gpu_instance_types = self._get_fallback_gpu_instances()
 
         if not gpu_instance_types:
-            console.print(f"[{self.colors['error']}]No GPU instance types found. Please check your AWS configuration.[/]")
+            console.print(f"[{self.colors['error']}]No GPU VM sizes available.[/]")
             return None
 
-        # Display available GPU instances organized by family
-        console.print("\n[bold]Available GPU Instance Types:[/bold]")
+        # Display available GPU VMs organized by family
+        console.print("\n[bold]Available GPU VM Sizes:[/bold]")
 
-        # Group by instance family
+        # Group by instance family (NC-series vs NV-series)
         families = {}
         for instance in gpu_instance_types:
-            family = instance['type'].split('.')[0]
+            if 'NC' in instance['type']:
+                family = 'NC-series (T4)'
+            elif 'NV' in instance['type']:
+                family = 'NV-series (A10)'
+            else:
+                family = 'Other'
             if family not in families:
                 families[family] = []
             families[family].append(instance)
@@ -598,19 +617,19 @@ class LLWinClientAWSSetup:
         for idx, instance in enumerate(gpu_instance_types, 1):
             gpu_desc = f"{instance['gpu_count']}x {instance['gpu_manufacturer']} {instance['gpu_name']}"
             if instance.get('gpu_memory_gb'):
-                gpu_desc += f" ({instance['gpu_memory_gb']} GB)"
+                gpu_desc += f" ({instance['gpu_memory_gb']} GB VRAM)"
 
-            console.print(f"  {idx:2d}. [cyan]{instance['type']:15s}[/cyan] - {instance['vcpu']:2d} vCPUs, {instance['memory_gb']:3d} GB RAM, {gpu_desc}")
+            console.print(f"  {idx:2d}. [cyan]{instance['type']:25s}[/cyan] - {instance['vcpu']:2d} vCPUs, {instance['memory_gb']:3d} GB RAM, {gpu_desc}")
 
         # Mark recommended instances
-        recommended = ['g4dn.xlarge', 'g4dn.2xlarge', 'g4dn.4xlarge']
+        recommended = ['Standard_NC16as_T4_v3', 'Standard_NC8as_T4_v3', 'Standard_NV12ads_A10_v5']
         rec_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended]
         if rec_indices:
-            console.print(f"\n[dim]Recommended for Adobe Creative Cloud: {', '.join(str(i) for i in rec_indices)}[/dim]")
+            console.print(f"\n[dim]Recommended for media/creative workflows: {', '.join(str(i) for i in rec_indices)}[/dim]")
 
-        # Get existing instance type index or default to 1
-        existing_type = existing_config.get('instance_type', 'g4dn.xlarge')
-        default_choice = next((idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] == existing_type), 1)
+        # Get existing VM type index or default to NC16as_T4_v3
+        existing_type = existing_config.get('vm_size', 'Standard_NC16as_T4_v3')
+        default_choice = next((idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] == existing_type), 3)
 
         # Build choices list
         valid_choices = [str(i) for i in range(1, len(gpu_instance_types) + 1)]
@@ -618,13 +637,13 @@ class LLWinClientAWSSetup:
         while True:
             try:
                 choice = IntPrompt.ask(
-                    f"\nSelect instance type (1-{len(gpu_instance_types)})",
+                    f"\nSelect VM size (1-{len(gpu_instance_types)})",
                     default=default_choice,
                     choices=valid_choices
                 )
                 if 1 <= choice <= len(gpu_instance_types):
-                    config['instance_type'] = gpu_instance_types[choice - 1]['type']
-                    console.print(f"[{self.colors['success']}]✓ Selected: {config['instance_type']}[/]")
+                    config['vm_size'] = gpu_instance_types[choice - 1]['type']
+                    console.print(f"[{self.colors['success']}]✓ Selected: {config['vm_size']}[/]")
                     break
                 else:
                     console.print(f"[{self.colors['error']}]Please select a number between 1 and {len(gpu_instance_types)}[/]")
@@ -632,7 +651,7 @@ class LLWinClientAWSSetup:
                 console.print(f"[{self.colors['error']}]Invalid selection[/]")
 
         config['instance_count'] = IntPrompt.ask(
-            "Number of Client Instances (1-10)",
+            "Number of VM Instances (1-10)",
             default=existing_config.get('instance_count', 1)
         )
 
@@ -642,17 +661,26 @@ class LLWinClientAWSSetup:
         elif config['instance_count'] > 10:
             config['instance_count'] = 10
 
-        config['root_volume_size'] = IntPrompt.ask(
-            "Root Volume Size (GB)",
-            default=existing_config.get('root_volume_size', 100)
+        config['os_disk_size_gb'] = IntPrompt.ask(
+            "OS Disk Size (GB)",
+            default=existing_config.get('os_disk_size_gb', 256)
+        )
+
+        config['data_disk_size_gb'] = IntPrompt.ask(
+            "Data Disk Size (GB) for media/projects",
+            default=existing_config.get('data_disk_size_gb', 2048)
         )
         console.print()
 
-        # Step 6: Additional Settings
-        console.print("[bold cyan]Step 6: Additional Settings[/bold cyan]")
-        config['ssh_key_name'] = Prompt.ask(
-            "EC2 Key Pair Name (optional, press Enter to skip)",
-            default=existing_config.get('ssh_key_name', '')
+        # Step 6: VM Admin Credentials
+        console.print("[bold cyan]Step 6: VM Admin Credentials[/bold cyan]")
+        config['admin_username'] = Prompt.ask(
+            "Admin Username",
+            default=existing_config.get('admin_username', 'azureuser')
+        )
+        config['admin_password'] = Prompt.ask(
+            "Admin Password (for RDP access)",
+            password=True
         )
         console.print()
 
