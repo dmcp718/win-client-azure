@@ -1170,10 +1170,10 @@ kdcproxyname:s:
             outputs = self.get_terraform_outputs()
             if outputs:
                 console.print("\n[bold]Deployment Information:[/bold]")
-                if 'instance_ids' in outputs:
-                    console.print(f"\nInstance IDs: {', '.join(outputs['instance_ids'])}")
-                if 'private_ips' in outputs:
-                    console.print(f"Private IPs: {', '.join(outputs['private_ips'])}")
+                if 'vm_names' in outputs:
+                    console.print(f"\nVM Names: {', '.join(outputs['vm_names'])}")
+                if 'resource_group_name' in outputs:
+                    console.print(f"Resource Group: {outputs['resource_group_name']}")
                 if 'public_ips' in outputs:
                     console.print(f"Public IPs: {', '.join(outputs['public_ips'])}")
 
@@ -1184,20 +1184,20 @@ kdcproxyname:s:
 
                 # Generate connection files for each VM
                 console.print(f"\n[bold]Generating connection files...[/bold]")
-                vm_ids = outputs.get('vm_ids', [])
+                vm_names = outputs.get('vm_names', [])
                 public_ips = outputs.get('public_ips', [])
                 admin_username = self.config.get('admin_username', 'azureuser')
                 rdp_files = []
 
-                for idx, (vm_id, public_ip) in enumerate(zip(vm_ids, public_ips)):
-                    vm_name = f"ll-win-client-{idx + 1}"
+                for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips)):
+                    rdp_name = f"ll-win-client-{idx + 1}"
                     try:
                         # Generate RDP file
-                        rdp_file = self.generate_rdp_file(public_ip, vm_name, admin_username)
+                        rdp_file = self.generate_rdp_file(public_ip, rdp_name, admin_username)
                         rdp_files.append(rdp_file)
-                        console.print(f"  [{self.colors['success']}]✓[/] RDP: {vm_name}.rdp")
+                        console.print(f"  [{self.colors['success']}]✓[/] RDP: {rdp_name}.rdp")
                     except Exception as e:
-                        console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {vm_name}: {e}")
+                        console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {rdp_name}: {e}")
 
                 # Show connection info
                 rdp_location = Path.home() / "Desktop" / "LucidLink-RDP"
@@ -1224,9 +1224,9 @@ kdcproxyname:s:
                     f.write(f"Username: {admin_username}\n")
                     f.write(f"Password: {self.config.get('admin_password', '***')}\n\n")
                     f.write(f"VMs:\n")
-                    for idx, vm_id in enumerate(vm_ids, 1):
+                    for idx, vm_name in enumerate(vm_names, 1):
                         public_ip = public_ips[idx-1] if idx-1 < len(public_ips) else "N/A"
-                        f.write(f"  {idx}. {vm_id}\n")
+                        f.write(f"  {idx}. {vm_name}\n")
                         f.write(f"      IP: {public_ip}\n")
                         f.write(f"      RDP: {rdp_location / f'll-win-client-{idx}.rdp'}\n\n")
                     f.write(f"\nTo Connect:\n")
@@ -1258,15 +1258,14 @@ kdcproxyname:s:
 
         # Get terraform outputs
         outputs = self.get_terraform_outputs()
-        if not outputs or 'instance_ids' not in outputs:
+        if not outputs or 'vm_names' not in outputs:
             console.print(f"[{self.colors['warning']}]No client deployments found.[/]")
             console.print("Deploy infrastructure first using option 3.")
             Prompt.ask("\nPress Enter to continue")
             return
 
         # Extract client information
-        vm_names = outputs.get('vm_names', outputs.get('instance_ids', []))
-        private_ips = outputs.get('private_ips', [])
+        vm_names = outputs.get('vm_names', [])
         public_ips = outputs.get('public_ips', [])
         filespace_domain = outputs.get('filespace_domain', 'Not configured')
         mount_point = outputs.get('mount_point', 'L:')
@@ -1333,7 +1332,6 @@ kdcproxyname:s:
             pass
 
         for idx, vm_name in enumerate(vm_names):
-            private_ip = private_ips[idx] if idx < len(private_ips) else "N/A"
             public_ip = public_ips[idx] if idx < len(public_ips) else "N/A"
 
             # Get VM status
@@ -1366,7 +1364,7 @@ kdcproxyname:s:
             instances_table.add_row(
                 str(idx + 1),
                 vm_name,
-                private_ip,
+                "N/A",  # Private IPs not exposed in Terraform outputs
                 public_ip,
                 status_display,
                 rdp_status_display
@@ -1390,22 +1388,22 @@ kdcproxyname:s:
 
         # Check if there's anything to destroy
         outputs = self.get_terraform_outputs()
-        if not outputs or 'instance_ids' not in outputs:
+        if not outputs or 'vm_names' not in outputs:
             console.print(f"[{self.colors['info']}]No client deployments found to destroy.[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
-        instance_ids = outputs.get('instance_ids', [])
-        if not instance_ids:
+        vm_names = outputs.get('vm_names', [])
+        if not vm_names:
             console.print(f"[{self.colors['info']}]No client instances to destroy.[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
         # Show what will be destroyed
         console.print("[bold]The following resources will be destroyed:[/bold]")
-        console.print(f"  • {len(instance_ids)} client VM(s)")
-        for idx, vm_id in enumerate(instance_ids, 1):
-            console.print(f"    - VM {idx}: {vm_id}")
+        console.print(f"  • {len(vm_names)} client VM(s)")
+        for idx, vm_name in enumerate(vm_names, 1):
+            console.print(f"    - VM {idx}: {vm_name}")
         console.print(f"  • VNet and networking components")
         console.print(f"  • Azure Key Vault")
         console.print()
@@ -1497,12 +1495,13 @@ kdcproxyname:s:
         rdp_location.mkdir(parents=True, exist_ok=True)
 
         for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips), 1):
+            rdp_name = f"ll-win-client-{idx}"
             try:
-                rdp_file = self.generate_rdp_file(public_ip, vm_name, username=admin_username, password=admin_password)
+                rdp_file = self.generate_rdp_file(public_ip, rdp_name, username=admin_username)
                 rdp_files.append(rdp_file)
-                console.print(f"  [{self.colors['success']}]✓[/] RDP: {vm_name}.rdp")
+                console.print(f"  [{self.colors['success']}]✓[/] RDP: {rdp_name}.rdp")
             except Exception as e:
-                console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {vm_name}: {e}")
+                console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {rdp_name}: {e}")
 
         # Save connection info to file
         console.print()
@@ -1564,20 +1563,20 @@ kdcproxyname:s:
             Prompt.ask("Press Enter to continue")
             return
 
-        instance_ids = outputs.get('instance_ids', [])
-        if not instance_ids:
+        vm_names = outputs.get('vm_names', [])
+        resource_group = outputs.get('resource_group_name', self.config.get('resource_group_name', 'll-win-client-rg'))
+        if not vm_names:
             console.print(f"[{self.colors['warning']}]No instances found in deployment.[/]")
             console.print()
             Prompt.ask("Press Enter to continue")
             return
 
-        console.print(f"Found {len(instance_ids)} VM(s):")
-        for idx, instance_id in enumerate(instance_ids):
-            console.print(f"  {idx + 1}. {instance_id}")
+        console.print(f"Found {len(vm_names)} VM(s):")
+        for idx, vm_name in enumerate(vm_names):
+            console.print(f"  {idx + 1}. {vm_name}")
         console.print()
 
-        # Check current status using Azure CLI
-        resource_group = self.config.get('resource_group_name', 'll-win-client-rg')
+        # Check current status using Azure CLI (resource_group already set above)
 
         try:
             # Get VM statuses
@@ -1628,12 +1627,11 @@ kdcproxyname:s:
             console.print(f"\n[bold yellow]Deallocating VMs...[/bold yellow]")
             console.print(f"[dim]This may take a few minutes...[/dim]")
 
-            # Get VM resource IDs for the running VMs
-            vm_ids = [vm_id for vm_id in instance_ids if any(vm_name in vm_id for vm_name in running_vms)]
-
+            # Deallocate running VMs by name
             deallocate_result = subprocess.run(
                 ['az', 'vm', 'deallocate',
-                 '--ids'] + vm_ids + ['--no-wait'],
+                 '--resource-group', resource_group,
+                 '--names'] + running_vms + ['--no-wait'],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -1708,20 +1706,20 @@ kdcproxyname:s:
             Prompt.ask("Press Enter to continue")
             return
 
-        instance_ids = outputs.get('instance_ids', [])
-        if not instance_ids:
+        vm_names = outputs.get('vm_names', [])
+        resource_group = outputs.get('resource_group_name', self.config.get('resource_group_name', 'll-win-client-rg'))
+        if not vm_names:
             console.print(f"[{self.colors['warning']}]No instances found in deployment.[/]")
             console.print()
             Prompt.ask("Press Enter to continue")
             return
 
-        console.print(f"Found {len(instance_ids)} VM(s):")
-        for idx, instance_id in enumerate(instance_ids):
-            console.print(f"  {idx + 1}. {instance_id}")
+        console.print(f"Found {len(vm_names)} VM(s):")
+        for idx, vm_name in enumerate(vm_names):
+            console.print(f"  {idx + 1}. {vm_name}")
         console.print()
 
-        # Check current status using Azure CLI
-        resource_group = self.config.get('resource_group_name', 'll-win-client-rg')
+        # Check current status using Azure CLI (resource_group already set above)
 
         try:
             # Get VM statuses
@@ -1771,12 +1769,11 @@ kdcproxyname:s:
             console.print(f"\n[bold green]Starting VMs...[/bold green]")
             console.print(f"[dim]This may take a few minutes...[/dim]")
 
-            # Get VM resource IDs for the stopped VMs
-            vm_ids = [vm_id for vm_id in instance_ids if any(vm_name in vm_id for vm_name in stopped_vms)]
-
+            # Start stopped VMs by name
             start_result = subprocess.run(
                 ['az', 'vm', 'start',
-                 '--ids'] + vm_ids + ['--no-wait'],
+                 '--resource-group', resource_group,
+                 '--names'] + stopped_vms + ['--no-wait'],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -1862,11 +1859,11 @@ kdcproxyname:s:
 
                 # Regenerate RDP files with new IPs
                 admin_username = self.config.get('admin_username', 'azureuser')
-                for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                    instance_name = f"ll-win-client-{idx + 1}"
+                for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips)):
+                    rdp_name = f"ll-win-client-{idx + 1}"
                     try:
-                        self.generate_rdp_file(public_ip, instance_name, username=admin_username)
-                        console.print(f"  [{self.colors['success']}]✓[/] Updated: {instance_name}.rdp ({public_ip})")
+                        self.generate_rdp_file(public_ip, rdp_name, username=admin_username)
+                        console.print(f"  [{self.colors['success']}]✓[/] Updated: {rdp_name}.rdp ({public_ip})")
                     except Exception as e:
                         logger.warning(f"Failed to regenerate RDP file: {e}")
 
