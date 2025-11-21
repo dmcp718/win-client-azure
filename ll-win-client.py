@@ -1387,9 +1387,22 @@ kdcproxyname:s:
         console.print()
 
         # Check if there's anything to destroy by checking terraform state
-        success, state_output = self.run_terraform_command(['state', 'list'])
-        if not success or not state_output.strip():
-            console.print(f"[{self.colors['info']}]No resources found in terraform state. Nothing to destroy.[/]")
+        try:
+            result = subprocess.run(
+                ['terraform', 'state', 'list'],
+                cwd=str(self.terraform_dir),
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            state_output = result.stdout.strip()
+
+            if result.returncode != 0 or not state_output:
+                console.print(f"[{self.colors['info']}]No resources found in terraform state. Nothing to destroy.[/]")
+                Prompt.ask("\nPress Enter to continue")
+                return
+        except Exception as e:
+            console.print(f"[{self.colors['error']}]Failed to check terraform state: {e}[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
