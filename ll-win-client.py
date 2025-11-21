@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-LucidLink Windows Client AWS Setup - Interactive TUI for deploying Windows LucidLink clients on AWS
+LucidLink Windows Client Azure Setup - Interactive TUI for deploying Windows LucidLink clients on Azure
 
 This script provides an interactive terminal interface to:
-1. Configure AWS VPC and network settings
+1. Configure Azure VNet and network settings
 2. Configure LucidLink filespace credentials
-3. Deploy Windows Server instances with LucidLink client
+3. Deploy Windows Server VMs with LucidLink client
 4. Monitor deployment status
 5. Destroy client infrastructure when needed
 
-Run with: uv run ll-win-client-aws.py
+Run with: uv run ll-win-client.py
 
 Dependencies are managed via pyproject.toml
 
 Examples:
-  ll-win-client-aws.py                     # Interactive mode
-  ll-win-client-aws.py -y                  # Auto-approve deployment/destroy prompts
-  ll-win-client-aws.py --yes               # Same as -y
+  ll-win-client.py                     # Interactive mode
+  ll-win-client.py -y                  # Auto-approve deployment/destroy prompts
+  ll-win-client.py --yes               # Same as -y
 """
 
 import os
@@ -45,7 +45,7 @@ from rich.text import Text
 from rich import box
 
 # Setup logging
-log_file = f"/tmp/ll-win-client-aws-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+log_file = f"/tmp/ll-win-client-azure-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -58,12 +58,12 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-class LLWinClientAWSSetup:
+class LLWinClientAzureSetup:
     def __init__(self, auto_approve: bool = False):
         self.script_dir = Path(__file__).parent.absolute()
         self.config_dir = Path.home() / ".ll-win-client"
         self.client_config_file = self.config_dir / "config.json"
-        self.instance_types_cache_file = self.config_dir / "ec2-instance-types.json"
+        self.vm_sizes_cache_file = self.config_dir / "azure-vm-sizes.json"
         self.terraform_dir = self.script_dir / "terraform" / "azure"
         self.templates_dir = self.terraform_dir / "templates"
 
@@ -231,159 +231,128 @@ class LLWinClientAWSSetup:
             logger.error(f"Azure credentials validation failed: {e}")
             return False
 
-    def fetch_ec2_instance_types(self, region: str = None) -> set:
-        """Fetch all available EC2 instance types from AWS"""
+    def fetch_azure_vm_sizes(self, location: str = None) -> set:
+        """Fetch all available Azure VM sizes for a location"""
         try:
-            import boto3
-            from datetime import datetime, timedelta
-
             # Check if we have a cached version that's less than 7 days old
-            if self.instance_types_cache_file.exists():
+            if self.vm_sizes_cache_file.exists():
                 try:
-                    with open(self.instance_types_cache_file, 'r') as f:
+                    with open(self.vm_sizes_cache_file, 'r') as f:
                         cache_data = json.load(f)
                         cache_time = datetime.fromisoformat(cache_data.get('timestamp', ''))
                         if datetime.now() - cache_time < timedelta(days=7):
-                            logger.info(f"Using cached EC2 instance types ({len(cache_data['instance_types'])} types)")
-                            return set(cache_data['instance_types'])
+                            logger.info(f"Using cached Azure VM sizes ({len(cache_data['vm_sizes'])} sizes)")
+                            return set(cache_data['vm_sizes'])
                 except Exception as e:
                     logger.debug(f"Could not load cache: {e}")
 
             # Need to fetch fresh data
-            console.print("[dim]Fetching EC2 instance types from AWS...[/dim]")
+            console.print("[dim]Fetching Azure VM sizes...[/dim]")
 
-            # Use provided region or default
-            if not region:
-                region = self.config.get('region', 'us-east-1')
+            # Use provided location or default
+            if not location:
+                location = self.config.get('location', 'eastus')
 
-            # Set up AWS credentials
-            session_kwargs = {'region_name': region}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
+            # Use Azure CLI to fetch VM sizes
+            result = subprocess.run(
+                ['az', 'vm', 'list-sizes', '--location', location, '--output', 'json'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
 
-            ec2 = boto3.client('ec2', **session_kwargs)
+            if result.returncode == 0:
+                vm_data = json.loads(result.stdout)
+                vm_sizes = set(vm['name'] for vm in vm_data)
 
-            # Fetch all instance types
-            instance_types = set()
-            paginator = ec2.get_paginator('describe_instance_types')
+                # Cache the results
+                cache_data = {
+                    'timestamp': datetime.now().isoformat(),
+                    'location': location,
+                    'vm_sizes': sorted(list(vm_sizes))
+                }
+                with open(self.vm_sizes_cache_file, 'w') as f:
+                    json.dump(cache_data, f, indent=2)
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console
-            ) as progress:
-                task = progress.add_task("Fetching instance types...", total=None)
+                logger.info(f"Fetched {len(vm_sizes)} Azure VM sizes")
+                console.print(f"[{self.colors['success']}]✓ Found {len(vm_sizes)} available VM sizes[/]")
 
-                for page in paginator.paginate():
-                    for instance_type in page['InstanceTypes']:
-                        instance_types.add(instance_type['InstanceType'])
+                return vm_sizes
+            else:
+                logger.warning(f"Could not fetch VM sizes: {result.stderr}")
+                return set()
 
-                progress.update(task, completed=100)
-
-            # Cache the results
-            cache_data = {
-                'timestamp': datetime.now().isoformat(),
-                'region': region,
-                'instance_types': sorted(list(instance_types))
-            }
-            with open(self.instance_types_cache_file, 'w') as f:
-                json.dump(cache_data, f, indent=2)
-
-            logger.info(f"Fetched {len(instance_types)} EC2 instance types from AWS")
-            console.print(f"[{self.colors['success']}]✓ Found {len(instance_types)} available instance types[/]")
-
-            return instance_types
-
-        except ImportError:
-            logger.warning("boto3 not available, using basic validation")
-            return set()
         except Exception as e:
-            logger.warning(f"Could not fetch instance types: {e}")
-            console.print(f"[{self.colors['warning']}]Could not fetch instance types from AWS, using basic validation[/]")
+            logger.warning(f"Could not fetch VM sizes: {e}")
+            console.print(f"[{self.colors['warning']}]Could not fetch VM sizes from Azure, using basic validation[/]")
             return set()
 
-    def is_valid_instance_type(self, instance_type: str) -> bool:
-        """Check if an instance type is valid"""
+    def is_valid_vm_size(self, vm_size: str) -> bool:
+        """Check if a VM size is valid"""
         # First check against cached list if available
-        if self.valid_instance_types and instance_type in self.valid_instance_types:
+        if self.valid_instance_types and vm_size in self.valid_instance_types:
             return True
 
-        # Fall back to regex pattern validation
-        # Matches: family (letters) + generation (digits) + attributes (optional letters) + . + size
-        # Examples: t3.large, c6id.xlarge, m5n.xlarge, r5dn.2xlarge
-        return bool(re.match(r'^[a-z]+[0-9]+[a-z]*\.[a-z0-9]+$', instance_type.lower()))
+        # Fall back to Azure VM size pattern validation
+        # Azure VM sizes follow pattern: Standard_[Family][Version][Variant]_[Size]
+        # Examples: Standard_NV6ads_A10_v5, Standard_NC4as_T4_v3, Standard_D2s_v3
+        return bool(re.match(r'^Standard_[A-Z]+[0-9]+[a-z]*(_[A-Z0-9]+)?_v[0-9]+$', vm_size))
 
-    def fetch_gpu_instance_types(self, region: str = None) -> List[Dict]:
-        """Fetch GPU instance types (g-series) with detailed specifications from AWS API"""
+    def fetch_gpu_vm_sizes(self, location: str = None) -> List[Dict]:
+        """Fetch GPU VM sizes with detailed specifications from Azure"""
         try:
-            import boto3
+            console.print("[dim]Fetching Azure GPU VM sizes...[/dim]")
 
-            console.print("[dim]Fetching GPU instance types from AWS...[/dim]")
+            # Use provided location or default
+            if not location:
+                location = self.config.get('location', 'eastus')
 
-            # Use provided region or default
-            if not region:
-                region = self.config.get('region', 'us-east-1')
+            # Use Azure CLI to fetch VM sizes
+            result = subprocess.run(
+                ['az', 'vm', 'list-sizes', '--location', location, '--output', 'json'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
 
-            # Set up AWS credentials
-            session_kwargs = {'region_name': region}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
+            if result.returncode == 0:
+                vm_data = json.loads(result.stdout)
 
-            ec2 = boto3.client('ec2', **session_kwargs)
-
-            # Fetch g-series instance types with details
-            gpu_instances = []
-            paginator = ec2.get_paginator('describe_instance_types')
-
-            # Filter for g-series instances (GPU instances)
-            filters = [{'Name': 'instance-type', 'Values': ['g*']}]
-
-            for page in paginator.paginate(Filters=filters):
-                for instance in page['InstanceTypes']:
-                    instance_type = instance['InstanceType']
-
-                    # Get GPU info
-                    gpu_info = instance.get('GpuInfo', {})
-                    gpus = gpu_info.get('Gpus', [])
-
-                    if gpus:  # Only include if it has GPU info
-                        gpu_count = sum(gpu.get('Count', 0) for gpu in gpus)
-                        gpu_manufacturer = gpus[0].get('Manufacturer', 'Unknown') if gpus else 'Unknown'
-                        gpu_name = gpus[0].get('Name', 'Unknown') if gpus else 'Unknown'
-                        gpu_memory = gpus[0].get('MemoryInfo', {}).get('SizeInMiB', 0) if gpus else 0
-                        gpu_memory_gb = gpu_memory // 1024 if gpu_memory else 0
-
-                        gpu_instances.append({
-                            'type': instance_type,
-                            'vcpu': instance.get('VCpuInfo', {}).get('DefaultVCpus', 0),
-                            'memory_mb': instance.get('MemoryInfo', {}).get('SizeInMiB', 0),
-                            'memory_gb': instance.get('MemoryInfo', {}).get('SizeInMiB', 0) // 1024,
-                            'gpu_count': gpu_count,
-                            'gpu_manufacturer': gpu_manufacturer,
-                            'gpu_name': gpu_name,
-                            'gpu_memory_gb': gpu_memory_gb,
-                            'network_performance': instance.get('NetworkInfo', {}).get('NetworkPerformance', 'Unknown')
+                # Filter for GPU VMs (NC and NV series)
+                gpu_vms = []
+                for vm in vm_data:
+                    vm_name = vm['name']
+                    # Include NC (compute) and NV (visualization) series
+                    if vm_name.startswith('Standard_NC') or vm_name.startswith('Standard_NV'):
+                        # Parse the VM size to extract details
+                        gpu_vms.append({
+                            'type': vm_name,
+                            'vcpu': vm.get('numberOfCores', 0),
+                            'memory_mb': vm.get('memoryInMb', 0),
+                            'memory_gb': vm.get('memoryInMb', 0) // 1024,
+                            'gpu_count': 1,  # Azure GPU VMs typically have 1 GPU per size
+                            'gpu_manufacturer': 'NVIDIA',
+                            'gpu_name': 'T4' if '_T4_' in vm_name else 'A10' if '_A10_' in vm_name else 'Unknown',
+                            'gpu_memory_gb': 16 if '_T4_' in vm_name else 24 if '_A10_' in vm_name else 0,
                         })
 
-            # Sort by instance family, then by size
-            gpu_instances.sort(key=lambda x: (x['type'].split('.')[0], x['vcpu']))
+                # Sort by VM family, then by vCPU
+                gpu_vms.sort(key=lambda x: (x['type'].split('_')[1] if '_' in x['type'] else x['type'], x['vcpu']))
 
-            logger.info(f"Found {len(gpu_instances)} GPU instance types in {region}")
-            console.print(f"[{self.colors['success']}]✓ Found {len(gpu_instances)} GPU instance types available in {region}[/]")
+                if gpu_vms:
+                    logger.info(f"Found {len(gpu_vms)} GPU VM sizes in {location}")
+                    console.print(f"[{self.colors['success']}]✓ Found {len(gpu_vms)} GPU VM sizes available in {location}[/]")
+                    return gpu_vms
+                else:
+                    logger.info(f"No GPU VMs found via Azure CLI, using fallback list")
+                    return self._get_fallback_gpu_instances()
+            else:
+                logger.warning(f"Could not fetch GPU VM sizes: {result.stderr}")
+                return self._get_fallback_gpu_instances()
 
-            return gpu_instances
-
-        except ImportError:
-            logger.warning("boto3 not available, using fallback GPU instance list")
-            console.print(f"[{self.colors['warning']}]Using default GPU instance types (boto3 not available)[/]")
-            return self._get_fallback_gpu_instances()
         except Exception as e:
-            logger.warning(f"Could not fetch GPU instance types: {e}")
-            console.print(f"[{self.colors['warning']}]Could not fetch from AWS, using default GPU instance types[/]")
+            logger.warning(f"Could not fetch GPU VM sizes: {e}")
+            console.print(f"[{self.colors['warning']}]Could not fetch from Azure, using default GPU VM sizes[/]")
             return self._get_fallback_gpu_instances()
 
     def _get_fallback_gpu_instances(self) -> List[Dict]:
@@ -724,15 +693,16 @@ class LLWinClientAWSSetup:
 
         # Display configuration (mask sensitive data)
         display_config = self.config.copy()
-        if 'aws_secret_access_key' in display_config:
-            display_config['aws_secret_access_key'] = '***MASKED***'
         if 'filespace_password' in display_config:
             display_config['filespace_password'] = '***MASKED***'
+        if 'admin_password' in display_config:
+            display_config['admin_password'] = '***MASKED***'
 
         # Group settings
-        aws_settings = {
-            'Region': display_config.get('region', 'Not set'),
-            'VPC CIDR': display_config.get('vpc_cidr', 'Not set'),
+        azure_settings = {
+            'Location': display_config.get('location', 'Not set'),
+            'Resource Group': display_config.get('resource_group_name', 'Not set'),
+            'VNet CIDR': display_config.get('vnet_cidr', 'Not set'),
         }
 
         filespace_settings = {
@@ -743,16 +713,18 @@ class LLWinClientAWSSetup:
             'Auto-configure LucidLink': display_config.get('auto_configure_lucidlink', 'yes'),
         }
 
-        instance_settings = {
-            'Instance Type': display_config.get('instance_type', 'Not set'),
+        vm_settings = {
+            'VM Size': display_config.get('vm_size', 'Not set'),
             'Instance Count': str(display_config.get('instance_count', 1)),
-            'Root Volume Size': f"{display_config.get('root_volume_size', 100)} GB",
-            'SSH Key': display_config.get('ssh_key_name', 'None'),
+            'OS Disk Size': f"{display_config.get('os_disk_size_gb', 256)} GB",
+            'Data Disk Size': f"{display_config.get('data_disk_size_gb', 2048)} GB",
+            'Admin Username': display_config.get('admin_username', 'Not set'),
+            'Admin Password': display_config.get('admin_password', 'Not set'),
         }
 
         # Add settings to table
-        table.add_row("[bold]AWS Settings[/bold]", "")
-        for key, value in aws_settings.items():
+        table.add_row("[bold]Azure Settings[/bold]", "")
+        for key, value in azure_settings.items():
             table.add_row(f"  {key}", value)
 
         table.add_row("", "")
@@ -761,8 +733,8 @@ class LLWinClientAWSSetup:
             table.add_row(f"  {key}", value)
 
         table.add_row("", "")
-        table.add_row("[bold]Instance Settings[/bold]", "")
-        for key, value in instance_settings.items():
+        table.add_row("[bold]VM Settings[/bold]", "")
+        for key, value in vm_settings.items():
             table.add_row(f"  {key}", value)
 
         console.print(table)
@@ -770,15 +742,15 @@ class LLWinClientAWSSetup:
 
         # Show estimated costs
         instance_count = display_config.get('instance_count', 1)
-        instance_type = display_config.get('instance_type', 't3.large')
+        vm_size = display_config.get('vm_size', 'Standard_NC16as_T4_v3')
 
         resources_text = f"[yellow]Estimated Resources:[/yellow]\n"
-        resources_text += f"• {instance_count} × {instance_type} EC2 instances\n"
-        resources_text += f"• {instance_count} × {display_config.get('root_volume_size', 100)} GB gp3 volumes\n"
-        resources_text += f"• 1 × VPC ({display_config.get('vpc_cidr', '10.0.0.0/16')})\n"
-        resources_text += f"• 1 × Internet Gateway\n"
-        resources_text += f"• 1 × Security Group\n"
-        resources_text += f"• 1 × IAM Role + Instance Profile"
+        resources_text += f"• {instance_count} × {vm_size} Virtual Machines\n"
+        resources_text += f"• {instance_count} × {display_config.get('os_disk_size_gb', 256)} GB OS Disks\n"
+        resources_text += f"• {instance_count} × {display_config.get('data_disk_size_gb', 2048)} GB Data Disks\n"
+        resources_text += f"• 1 × VNet ({display_config.get('vnet_cidr', '10.0.0.0/16')})\n"
+        resources_text += f"• 1 × Network Security Group\n"
+        resources_text += f"• 1 × Azure Key Vault (for LucidLink credentials)"
 
         console.print(Panel.fit(resources_text, border_style="yellow"))
 
@@ -987,73 +959,6 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
             logger.error(f"Failed to get Terraform outputs: {e}")
             return None
 
-    def get_windows_password(self, instance_id: str, key_path: str) -> Optional[str]:
-        """Retrieve Windows administrator password using EC2 key pair"""
-        try:
-            import boto3
-
-            # Set up AWS credentials
-            session_kwargs = {'region_name': self.config.get('region', 'us-east-1')}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
-
-            ec2 = boto3.client('ec2', **session_kwargs)
-
-            # Wait for password to be available (can take 5-10 minutes after launch)
-            console.print(f"[dim]Waiting for Windows password to be available for {instance_id}...[/dim]")
-
-            max_attempts = 30
-            for attempt in range(max_attempts):
-                try:
-                    response = ec2.get_password_data(InstanceId=instance_id)
-                    password_data = response.get('PasswordData', '')
-
-                    if password_data:
-                        # Decrypt password using private key
-                        if os.path.exists(key_path):
-                            from cryptography.hazmat.primitives import serialization
-                            from cryptography.hazmat.primitives.asymmetric import padding
-                            from cryptography.hazmat.backends import default_backend
-
-                            # Load private key
-                            with open(key_path, 'rb') as key_file:
-                                private_key = serialization.load_pem_private_key(
-                                    key_file.read(),
-                                    password=None,
-                                    backend=default_backend()
-                                )
-
-                            # Decrypt password
-                            encrypted_password = base64.b64decode(password_data)
-                            decrypted_password = private_key.decrypt(
-                                encrypted_password,
-                                padding.PKCS1v15()
-                            )
-
-                            return decrypted_password.decode('utf-8')
-                        else:
-                            logger.warning(f"Key file not found: {key_path}")
-                            return None
-
-                    if attempt < max_attempts - 1:
-                        time.sleep(10)
-
-                except Exception as e:
-                    logger.debug(f"Attempt {attempt + 1}: Password not available yet")
-                    if attempt < max_attempts - 1:
-                        time.sleep(10)
-
-            logger.warning(f"Password not available after {max_attempts} attempts")
-            return None
-
-        except ImportError:
-            logger.warning("cryptography library not available for password decryption")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get Windows password: {e}")
-            return None
 
     def generate_secure_password(self, length: int = 16) -> str:
         """Generate a secure random password"""
@@ -1071,46 +976,12 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
 
         return password
 
-    def check_ssm_agent_status(self, instance_id: str) -> str:
-        """Check if SSM agent is registered and online for an instance"""
-        try:
-            import boto3
 
-            # Set up AWS credentials
-            session_kwargs = {'region_name': self.config.get('region', 'us-east-1')}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
-
-            ssm = boto3.client('ssm', **session_kwargs)
-
-            # Check if instance is registered with SSM
-            response = ssm.describe_instance_information(
-                Filters=[
-                    {
-                        'Key': 'InstanceIds',
-                        'Values': [instance_id]
-                    }
-                ]
-            )
-
-            if response['InstanceInformationList']:
-                instance_info = response['InstanceInformationList'][0]
-                ping_status = instance_info.get('PingStatus', 'Unknown')
-                return ping_status  # Online, ConnectionLost, Inactive, etc.
-            else:
-                return 'NotRegistered'
-
-        except Exception as e:
-            logger.debug(f"Failed to check SSM agent status: {e}")
-            return 'Unknown'
-
-    def check_dcv_status(self, public_ip: str) -> str:
-        """Check if Amazon DCV server is accessible on port 8443
+    def check_rdp_status(self, public_ip: str) -> str:
+        """Check if RDP server is accessible on port 3389
 
         Args:
-            public_ip: Public IP address of the instance
+            public_ip: Public IP address of the VM
 
         Returns:
             'Ready', 'NotReady', or 'Unknown'
@@ -1121,11 +992,11 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
             if not public_ip or public_ip == "N/A":
                 return 'Unknown'
 
-            # Try to connect to port 8443 with 3 second timeout
+            # Try to connect to port 3389 (RDP) with 3 second timeout
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(3)
 
-            result = sock.connect_ex((public_ip, 8443))
+            result = sock.connect_ex((public_ip, 3389))
             sock.close()
 
             if result == 0:
@@ -1134,236 +1005,79 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
                 return 'NotReady'  # Port is closed
 
         except Exception as e:
-            logger.debug(f"Failed to check DCV status for {public_ip}: {e}")
+            logger.debug(f"Failed to check RDP status for {public_ip}: {e}")
             return 'Unknown'
 
-    def wait_for_ssm_ready(self, instance_ids: List[str], timeout_minutes: int = 15) -> Dict[str, bool]:
-        """Wait for SSM agent to be ready on instances
 
-        Returns dict mapping instance_id -> ready status (True/False)
-        """
-        console.print(f"\n[bold yellow]Waiting for SSM agent to be ready on instances...[/bold yellow]")
-        console.print(f"[dim]This typically takes 5-10 minutes after Windows boot[/dim]")
-        console.print()
-
-        timeout_seconds = timeout_minutes * 60
-        check_interval = 30  # Check every 30 seconds
-        max_checks = timeout_seconds // check_interval
-
-        ready_instances = {}
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task(
-                f"Waiting for {len(instance_ids)} instance(s)...",
-                total=max_checks
-            )
-
-            for check_num in range(max_checks):
-                # Check status of all instances
-                all_ready = True
-                status_lines = []
-
-                for inst_id in instance_ids:
-                    if inst_id in ready_instances:
-                        continue  # Already ready
-
-                    status = self.check_ssm_agent_status(inst_id)
-
-                    if status == 'Online':
-                        ready_instances[inst_id] = True
-                        status_lines.append(f"  [{self.colors['success']}]✓[/] {inst_id}: Ready")
-                    else:
-                        all_ready = False
-                        status_lines.append(f"  [dim]{inst_id}: {status}[/dim]")
-
-                # Update progress description with current status
-                ready_count = len(ready_instances)
-                progress.update(
-                    task,
-                    description=f"{ready_count}/{len(instance_ids)} ready",
-                    completed=check_num + 1
-                )
-
-                # Print status for this check
-                if check_num % 2 == 0:  # Print every minute (every 2nd check)
-                    console.print(f"\n[dim]Check {check_num + 1}/{max_checks}:[/dim]")
-                    for line in status_lines:
-                        console.print(line)
-
-                if all_ready:
-                    progress.update(task, completed=max_checks)
-                    console.print(f"\n[{self.colors['success']}]✓ All {len(instance_ids)} instance(s) are ready![/]")
-                    break
-
-                # Wait before next check (unless this is the last check)
-                if check_num < max_checks - 1:
-                    time.sleep(check_interval)
-
-            # Return status for all instances (mark not-ready ones as False)
-            for inst_id in instance_ids:
-                if inst_id not in ready_instances:
-                    ready_instances[inst_id] = False
-
-        return ready_instances
-
-    def set_windows_password_via_ssm(self, instance_id: str, password: Optional[str] = None) -> Optional[str]:
-        """Automatically set Windows Administrator password via SSM"""
-        try:
-            import boto3
-
-            # Generate password if not provided
-            if not password:
-                password = self.generate_secure_password()
-
-            # Set up AWS credentials
-            session_kwargs = {'region_name': self.config.get('region', 'us-east-1')}
-            if self.config.get('aws_access_key_id'):
-                session_kwargs['aws_access_key_id'] = self.config['aws_access_key_id']
-            if self.config.get('aws_secret_access_key'):
-                session_kwargs['aws_secret_access_key'] = self.config['aws_secret_access_key']
-
-            ssm = boto3.client('ssm', **session_kwargs)
-
-            console.print(f"[dim]Setting password for {instance_id} via SSM...[/dim]")
-
-            # Send command to set password using PowerShell (more reliable than net user)
-            # Escape password for PowerShell by doubling any single quotes
-            ps_escaped_password = password.replace("'", "''")
-
-            response = ssm.send_command(
-                InstanceIds=[instance_id],
-                DocumentName='AWS-RunPowerShellScript',
-                Parameters={
-                    'commands': [
-                        # Use PowerShell cmdlets for more reliable password setting
-                        f"$password = ConvertTo-SecureString '{ps_escaped_password}' -AsPlainText -Force",
-                        "Set-LocalUser -Name 'Administrator' -Password $password",
-                        "Write-Host 'Password set successfully'",
-                        # Verify the password was set by checking the account
-                        "Get-LocalUser -Name 'Administrator' | Select-Object Name, Enabled, PasswordLastSet | Format-List"
-                    ]
-                },
-                Comment='Set Windows Administrator password via ll-win-client-aws'
-            )
-
-            command_id = response['Command']['CommandId']
-            logger.info(f"SSM command sent: {command_id}")
-
-            # Wait for command to complete
-            console.print(f"[dim]Waiting for SSM command to complete...[/dim]")
-            max_attempts = 30
-            for attempt in range(max_attempts):
-                time.sleep(2)
-
-                try:
-                    result = ssm.get_command_invocation(
-                        CommandId=command_id,
-                        InstanceId=instance_id
-                    )
-
-                    status = result['Status']
-
-                    if status == 'Success':
-                        # Show command output for verification
-                        stdout = result.get('StandardOutputContent', '').strip()
-                        stderr = result.get('StandardErrorContent', '').strip()
-
-                        if stdout:
-                            logger.info(f"SSM output: {stdout}")
-                        if stderr:
-                            logger.warning(f"SSM stderr: {stderr}")
-
-                        console.print(f"[{self.colors['success']}]✓ Password set successfully via SSM[/]")
-                        return password
-                    elif status in ['Failed', 'Cancelled', 'TimedOut']:
-                        # Get detailed error information
-                        stdout = result.get('StandardOutputContent', '').strip()
-                        stderr = result.get('StandardErrorContent', '').strip()
-
-                        logger.error(f"SSM command failed with status: {status}")
-                        if stdout:
-                            logger.error(f"SSM stdout: {stdout}")
-                            console.print(f"[dim]Output: {stdout[:200]}[/dim]")
-                        if stderr:
-                            logger.error(f"SSM stderr: {stderr}")
-                            console.print(f"[{self.colors['warning']}]Error: {stderr[:200]}[/]")
-
-                        console.print(f"[{self.colors['warning']}]⚠ SSM command failed: {status}[/]")
-                        return None
-                    elif status in ['Pending', 'InProgress', 'Delayed']:
-                        # Still running, continue waiting
-                        continue
-
-                except ssm.exceptions.InvocationDoesNotExist:
-                    # Command not yet registered, keep waiting
-                    continue
-
-            logger.warning("SSM command timed out")
-            console.print(f"[{self.colors['warning']}]⚠ SSM command timed out[/]")
-            return None
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Failed to set password via SSM: {e}")
-
-            # Provide helpful context based on error type
-            if "InvalidInstanceId" in error_msg or "not in a valid state" in error_msg:
-                console.print(f"[{self.colors['warning']}]⚠ Instance not ready yet - SSM agent is still starting up[/]")
-            else:
-                console.print(f"[{self.colors['warning']}]⚠ Could not set password via SSM: {error_msg}[/]")
-            return None
-
-    def generate_dcv_file(self, instance_ip: str, instance_name: str, username: str = None, password: Optional[str] = None) -> str:
-        """Generate Amazon DCV connection file on Desktop
+    def generate_rdp_file(self, vm_ip: str, vm_name: str, username: str = None) -> str:
+        """Generate RDP connection file on Desktop
 
         Args:
-            instance_ip: Public IP of the instance
-            instance_name: Name for the DCV file
-            username: Optional username (if None, DCV will prompt for username)
-            password: Optional password (if provided, will be embedded in file)
+            vm_ip: Public IP of the VM
+            vm_name: Name for the RDP file
+            username: Optional username
         """
         # Save to user's Desktop for easy access
-        desktop_dir = Path.home() / "Desktop" / "LucidLink-DCV"
+        desktop_dir = Path.home() / "Desktop" / "LucidLink-RDP"
         desktop_dir.mkdir(parents=True, exist_ok=True)
 
-        dcv_file_path = desktop_dir / f"{instance_name}.dcv"
+        rdp_file_path = desktop_dir / f"{vm_name}.rdp"
 
-        # DCV connection file content (INI format)
-        dcv_content = f"""[version]
-format=1.0
-
-[connect]
-host={instance_ip}
-port=8443
-sessionid=console
+        # RDP connection file content
+        rdp_content = f"""full address:s:{vm_ip}:3389
+username:s:{username if username else ''}
+screen mode id:i:2
+use multimon:i:0
+desktopwidth:i:1920
+desktopheight:i:1080
+session bpp:i:32
+compression:i:1
+keyboardhook:i:2
+audiocapturemode:i:0
+videoplaybackmode:i:1
+connection type:i:7
+networkautodetect:i:1
+bandwidthautodetect:i:1
+displayconnectionbar:i:1
+enableworkspacereconnect:i:0
+disable wallpaper:i:0
+allow font smoothing:i:1
+allow desktop composition:i:1
+disable full window drag:i:0
+disable menu anims:i:0
+disable themes:i:0
+disable cursor setting:i:0
+bitmapcachepersistenable:i:1
+audiomode:i:0
+redirectprinters:i:0
+redirectcomports:i:0
+redirectsmartcards:i:0
+redirectclipboard:i:1
+redirectposdevices:i:0
+autoreconnection enabled:i:1
+authentication level:i:2
+prompt for credentials:i:0
+negotiate security layer:i:1
+remoteapplicationmode:i:0
+alternate shell:s:
+shell working directory:s:
+gatewayhostname:s:
+gatewayusagemethod:i:0
+gatewaycredentialssource:i:0
+gatewayprofileusagemethod:i:1
+promptcredentialonce:i:0
+gatewaybrokeringtype:i:0
+use redirection server name:i:0
+rdgiskdcproxy:i:0
+kdcproxyname:s:
 """
 
-        # Add username if specified (omit to let DCV prompt for username)
-        if username:
-            dcv_content += f"user={username}\n"
+        # Write RDP file
+        with open(rdp_file_path, 'w') as f:
+            f.write(rdp_content)
 
-        # Add password if provided (user will need to enter it if not)
-        if password:
-            dcv_content += f"password={password}\n"
-
-        dcv_content += f"""
-[options]
-fullscreen=false
-preferred-video-codec=h264
-"""
-
-        # Write DCV file
-        with open(dcv_file_path, 'w') as f:
-            f.write(dcv_content)
-
-        logger.info(f"Generated DCV file: {dcv_file_path}")
-        return str(dcv_file_path)
+        logger.info(f"Generated RDP file: {rdp_file_path}")
+        return str(rdp_file_path)
 
     def deploy_infrastructure(self):
         """Deploy client infrastructure using Terraform"""
@@ -1377,7 +1091,7 @@ preferred-video-codec=h264
 
         console.print(Panel.fit(
             "[bold]Client Infrastructure Deployment[/bold]\n"
-            "This will deploy Windows LucidLink client instances to AWS using Terraform.",
+            "This will deploy Windows LucidLink client VMs to Azure using Terraform.",
             border_style="blue"
         ))
         console.print()
@@ -1572,182 +1286,58 @@ preferred-video-codec=h264
                         console.print(f"    [{self.colors['error']}]✗[/] Deployment error: {e}")
                         logger.error(f"Deployment script error for {instance_id}: {e}")
 
-                # Generate connection files for each instance
+                # Generate connection files for each VM
                 console.print(f"\n[bold]Generating connection files...[/bold]")
-                instance_ids = outputs.get('instance_ids', [])
+                vm_ids = outputs.get('vm_ids', [])
                 public_ips = outputs.get('public_ips', [])
-                dcv_files = []
+                admin_username = self.config.get('admin_username', 'azureuser')
+                rdp_files = []
 
-                for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                    instance_name = f"ll-win-client-{idx + 1}"
+                for idx, (vm_id, public_ip) in enumerate(zip(vm_ids, public_ips)):
+                    vm_name = f"ll-win-client-{idx + 1}"
                     try:
-                        # Generate DCV file
-                        dcv_file = self.generate_dcv_file(public_ip, instance_name)
-                        dcv_files.append(dcv_file)
-                        console.print(f"  [{self.colors['success']}]✓[/] DCV: {instance_name}.dcv")
+                        # Generate RDP file
+                        rdp_file = self.generate_rdp_file(public_ip, vm_name, admin_username)
+                        rdp_files.append(rdp_file)
+                        console.print(f"  [{self.colors['success']}]✓[/] RDP: {vm_name}.rdp")
                     except Exception as e:
-                        console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate DCV file for {instance_name}: {e}")
+                        console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {vm_name}: {e}")
 
                 # Show connection info
-                dcv_location = Path.home() / "Desktop" / "LucidLink-DCV"
+                rdp_location = Path.home() / "Desktop" / "LucidLink-RDP"
 
                 console.print(f"\n[bold cyan]═══════════════════════════════════════════════════════════[/bold cyan]")
                 console.print(f"[bold cyan]Connection Files Generated[/bold cyan]")
                 console.print(f"[bold cyan]═══════════════════════════════════════════════════════════[/bold cyan]")
 
-                console.print(f"\n[bold green]Amazon DCV Connection[/bold green]")
-                console.print(f"Location: [bold]{dcv_location}[/bold]")
-                console.print(f"\n[bold]To connect using DCV:[/bold]")
-                console.print(f"1. Download the DCV client from: [cyan]https://download.nice-dcv.com/[/cyan]")
-                console.print(f"2. Install the DCV client on your local machine")
-                console.print(f"3. Open your Desktop and find the 'LucidLink-DCV' folder")
-                console.print(f"4. Double-click the .dcv file for the instance you want to access")
-                console.print(f"5. When prompted, enter Username: [bold]Administrator[/bold]")
-                console.print(f"6. Password will auto-fill (or check PASSWORDS.txt)")
-                console.print(f"\n[dim]Note: DCV provides superior performance for graphics-intensive applications like Adobe Creative Cloud[/dim]")
+                console.print(f"\n[bold green]RDP Connection[/bold green]")
+                console.print(f"Location: [bold]{rdp_location}[/bold]")
+                console.print(f"\n[bold]To connect using RDP:[/bold]")
+                console.print(f"1. Open your Desktop and find the 'LucidLink-RDP' folder")
+                console.print(f"2. Double-click the .rdp file for the VM you want to access")
+                console.print(f"3. When prompted, enter your credentials:")
+                console.print(f"   Username: [bold]{admin_username}[/bold]")
+                console.print(f"   Password: [bold]{self.config.get('admin_password', '***')}[/bold]")
+                console.print(f"\n[dim]Note: RDP is built into Windows and macOS. For Linux, install Remmina or similar.[/dim]")
 
-                # Try to retrieve Windows password if SSH key is configured
-                ssh_key_name = self.config.get('ssh_key_name', '')
-                if ssh_key_name:
-                    console.print(f"\n[bold yellow]Retrieving Windows Administrator password...[/bold yellow]")
-                    console.print(f"[dim]Note: This may take 5-10 minutes after instance launch[/dim]")
+                # Save connection info to a text file on Desktop
+                password_file = Path.home() / "Desktop" / "LucidLink-RDP" / "CONNECTION_INFO.txt"
+                with open(password_file, 'w') as f:
+                    f.write(f"Windows VM Connection Information\n")
+                    f.write(f"==================================\n\n")
+                    f.write(f"Username: {admin_username}\n")
+                    f.write(f"Password: {self.config.get('admin_password', '***')}\n\n")
+                    f.write(f"VMs:\n")
+                    for idx, vm_id in enumerate(vm_ids, 1):
+                        public_ip = public_ips[idx-1] if idx-1 < len(public_ips) else "N/A"
+                        f.write(f"  {idx}. {vm_id}\n")
+                        f.write(f"      IP: {public_ip}\n")
+                        f.write(f"      RDP: {rdp_location / f'll-win-client-{idx}.rdp'}\n\n")
+                    f.write(f"\nTo Connect:\n")
+                    f.write(f"  1. Double-click the .rdp file\n")
+                    f.write(f"  2. Enter the username and password above\n")
 
-                    # Prompt for key path
-                    default_key_path = os.path.expanduser(f"~/.ssh/{ssh_key_name}.pem")
-                    console.print(f"\n[dim]Default key path: {default_key_path}[/dim]")
-
-                    if Confirm.ask("Retrieve Windows password now?", default=False):
-                        key_path = Prompt.ask("Path to private key file", default=default_key_path)
-
-                        if os.path.exists(key_path):
-                            # Try to get password for first instance
-                            password = self.get_windows_password(instance_ids[0], key_path)
-                            if password:
-                                console.print(f"\n[{self.colors['success']}]Windows Administrator Password:[/]")
-                                console.print(Panel.fit(
-                                    f"[bold white]{password}[/bold white]",
-                                    border_style="green",
-                                    title="Copy this password"
-                                ))
-                                console.print(f"\n[dim]Use this password when connecting via DCV[/dim]")
-
-                                # Save password to a text file on Desktop
-                                password_file = Path.home() / "Desktop" / "LucidLink-DCV" / "PASSWORDS.txt"
-                                with open(password_file, 'w') as f:
-                                    f.write(f"Windows Administrator Passwords\n")
-                                    f.write(f"=================================\n\n")
-                                    f.write(f"Password: {password}\n\n")
-                                    f.write(f"This password works for all instances:\n")
-                                    for idx, inst_id in enumerate(instance_ids, 1):
-                                        public_ip = public_ips[idx-1] if idx-1 < len(public_ips) else "N/A"
-                                        f.write(f"  {idx}. {inst_id} ({public_ip})\n")
-                                    f.write(f"\nConnection Info:\n")
-                                    f.write(f"  Username: Administrator\n")
-                                    f.write(f"  Password: {password}\n")
-                                console.print(f"\n[{self.colors['info']}]Password also saved to: {password_file}[/]")
-
-                                # Regenerate DCV files with password
-                                console.print(f"\n[dim]Updating DCV files with password...[/dim]")
-                                for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                                    instance_name = f"ll-win-client-{idx + 1}"
-                                    try:
-                                        self.generate_dcv_file(public_ip, instance_name, password=password)
-                                    except Exception as e:
-                                        logger.warning(f"Failed to regenerate DCV file with password: {e}")
-                            else:
-                                console.print(f"\n[{self.colors['warning']}]Could not retrieve password at this time.[/]")
-                                console.print(f"You can retrieve it later using AWS CLI:")
-                                console.print(f"  aws ec2 get-password-data --instance-id {instance_ids[0]} \\")
-                                console.print(f"    --priv-launch-key {key_path} --region {self.config.get('region', 'us-east-1')}")
-                        else:
-                            console.print(f"[{self.colors['error']}]Key file not found: {key_path}[/]")
-                else:
-                    # No SSH key - use automated SSM password setting
-                    console.print(f"\n[bold yellow]🔐 Setting Windows Administrator passwords automatically...[/bold yellow]")
-                    console.print(f"[dim]Using AWS Systems Manager to set one password for all instances[/dim]")
-                    console.print()
-
-                    # Wait for SSM agents to be ready
-                    ssm_ready = self.wait_for_ssm_ready(instance_ids, timeout_minutes=15)
-                    console.print()
-
-                    # Check if any instances are ready
-                    ready_instances = [inst_id for inst_id, ready in ssm_ready.items() if ready]
-                    not_ready_instances = [inst_id for inst_id, ready in ssm_ready.items() if not ready]
-
-                    if not ready_instances:
-                        console.print(f"[{self.colors['warning']}]⚠ No instances are ready for password setting yet[/]")
-                        console.print(f"[dim]SSM agents are still initializing. Please try again in a few minutes.[/dim]")
-                    else:
-                        # Generate one password for all instances
-                        shared_password = self.generate_secure_password()
-                        console.print(f"[bold]Generated password: [green]{shared_password}[/green][/bold]")
-                        console.print(f"[dim]Setting this password on ready instances...[/dim]")
-                        console.print()
-
-                        passwords = {}
-                        success_count = 0
-
-                        # Set password on ready instances
-                        for idx, inst_id in enumerate(instance_ids, 1):
-                            if inst_id in ready_instances:
-                                console.print(f"Instance {idx} ({inst_id}):")
-                                password = self.set_windows_password_via_ssm(inst_id, shared_password)
-                                if password:
-                                    passwords[inst_id] = password
-                                    success_count += 1
-                                else:
-                                    console.print(f"[{self.colors['warning']}]⚠ Failed to set password[/]")
-                                console.print()
-                            else:
-                                console.print(f"Instance {idx} ({inst_id}): [{self.colors['warning']}]Skipped - SSM not ready[/]")
-                                console.print()
-
-                        if success_count > 0:
-                            console.print(f"[{self.colors['success']}]✓ Password set on {success_count}/{len(instance_ids)} instance(s)[/]")
-
-                        # Save password if any were set
-                        if passwords:
-                            password_file = Path.home() / "Desktop" / "LucidLink-DCV" / "PASSWORDS.txt"
-                            with open(password_file, 'w') as f:
-                                f.write("Windows Administrator Password\n")
-                                f.write("=" * 60 + "\n\n")
-                                f.write("IMPORTANT: Keep this file secure!\n\n")
-                                f.write(f"ONE PASSWORD FOR ALL INSTANCES:\n")
-                                f.write(f"  Password: {shared_password}\n\n")
-                                f.write("This password works for:\n")
-                                for idx, inst_id in enumerate(instance_ids, 1):
-                                    public_ip = public_ips[idx-1] if idx-1 < len(public_ips) else "N/A"
-                                    status = "✓ Password set" if inst_id in passwords else "✗ Not set"
-                                    f.write(f"  {idx}. {inst_id} ({public_ip}) - {status}\n")
-                                f.write("\nConnection Info:\n")
-                                f.write("  Username: Administrator\n")
-                                f.write(f"  Password: {shared_password}\n")
-                                f.write("  (Same password for all instances)\n")
-
-                            console.print(f"[{self.colors['success']}]Password saved to: {password_file}[/]")
-
-                            # Display password
-                            console.print()
-                            console.print(Panel.fit(
-                                f"[bold]Windows Administrator Password[/bold]\n\n"
-                                f"[bold green]{shared_password}[/bold green]\n\n"
-                                f"[dim]This password works for ALL {len(instance_ids)} instance(s)[/dim]",
-                                border_style="green",
-                                title="Copy this password"
-                            ))
-
-                            # Regenerate DCV files with password
-                            console.print(f"\n[dim]Updating DCV files with password...[/dim]")
-                            for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                                instance_name = f"ll-win-client-{idx + 1}"
-                                try:
-                                    self.generate_dcv_file(public_ip, instance_name, password=shared_password)
-                                except Exception as e:
-                                    logger.warning(f"Failed to regenerate DCV file with password: {e}")
-                        else:
-                            console.print(f"[{self.colors['warning']}]⚠ No passwords were set[/]")
-                            console.print(f"[dim]You can use Menu Option 5 to try again later[/dim]")
+                console.print(f"\n[{self.colors['info']}]Connection info saved to: {password_file}[/]")
         else:
             console.print()
             console.print(Panel.fit(
@@ -1917,10 +1507,11 @@ preferred-video-codec=h264
 
         # Show what will be destroyed
         console.print("[bold]The following resources will be destroyed:[/bold]")
-        console.print(f"  • {len(instance_ids)} client instance(s)")
-        for idx, instance_id in enumerate(instance_ids, 1):
-            console.print(f"    - Instance {idx}: {instance_id}")
-        console.print(f"  • VPC and networking components")
+        console.print(f"  • {len(instance_ids)} client VM(s)")
+        for idx, vm_id in enumerate(instance_ids, 1):
+            console.print(f"    - VM {idx}: {vm_id}")
+        console.print(f"  • VNet and networking components")
+        console.print(f"  • Azure Key Vault")
         console.print()
 
         # Single confirmation (skip if auto-approve is enabled)
@@ -1942,7 +1533,7 @@ preferred-video-codec=h264
             console.print()
             console.print(Panel.fit(
                 f"[{self.colors['success']}]Client infrastructure destroyed successfully![/]\n"
-                "All client instances and VPC have been terminated.",
+                "All client VMs and VNet have been terminated.",
                 border_style="green"
             ))
 
@@ -1950,11 +1541,9 @@ preferred-video-codec=h264
             if self.config.get('filespace_domain'):
                 console.print()
                 if Confirm.ask("Clear stored client configuration?", default=False):
-                    # Keep AWS credentials but clear client-specific config
-                    preserved_keys = ['aws_access_key_id', 'aws_secret_access_key', 'region']
-                    new_config = {k: v for k, v in self.config.items() if k in preserved_keys}
-                    self.config = new_config
-                    self.save_config(new_config)
+                    # Clear all client-specific config
+                    self.config = {}
+                    self.save_config({})
                     console.print(f"[{self.colors['success']}]✓ Client configuration cleared[/]")
         else:
             console.print()
@@ -2446,7 +2035,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='LucidLink Windows Client AWS Setup - Deploy Windows LucidLink clients to AWS',
+        description='LucidLink Windows Client Azure Setup - Deploy Windows LucidLink clients to Azure',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
@@ -2464,12 +2053,12 @@ Examples:
 
     args = parser.parse_args()
 
-    console.print("\n[bold cyan]LucidLink Windows Client AWS Setup[/bold cyan]")
+    console.print("\n[bold cyan]LucidLink Windows Client Azure Setup[/bold cyan]")
     console.print(f"Log file: {log_file}\n")
 
     # Check dependencies
     missing_deps = []
-    for cmd in ['terraform', 'aws']:
+    for cmd in ['terraform', 'az']:
         if not shutil.which(cmd):
             missing_deps.append(cmd)
 
@@ -2478,11 +2067,11 @@ Examples:
         console.print("\nPlease install:")
         if 'terraform' in missing_deps:
             console.print("  • Terraform: https://www.terraform.io/downloads")
-        if 'aws' in missing_deps:
-            console.print("  • AWS CLI: https://aws.amazon.com/cli/")
+        if 'az' in missing_deps:
+            console.print("  • Azure CLI: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli")
         sys.exit(1)
 
-    app = LLWinClientAWSSetup(auto_approve=args.auto_approve)
+    app = LLWinClientAzureSetup(auto_approve=args.auto_approve)
     app.run()
 
 
