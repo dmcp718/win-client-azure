@@ -13,7 +13,7 @@ variable "resource_group_name" {
 variable "vm_size" {
   description = "Size of the VM"
   type        = string
-  default     = "Standard_B4ms"
+  default     = "Standard_NC16as_T4_v3"
 }
 
 variable "instance_count" {
@@ -60,4 +60,28 @@ variable "lucidlink_installer_url" {
   description = "URL to download LucidLink installer"
   type        = string
   default     = "https://www.lucidlink.com/download/new-ll-latest/win/stable/"
+}
+
+variable "os_disk_size_gb" {
+  description = "Size of the OS disk in GB"
+  type        = number
+  default     = 256
+}
+
+variable "data_disk_size_gb" {
+  description = "Size of the data disk in GB for media/projects"
+  type        = number
+  default     = 2048
+}
+
+variable "data_disk_iops" {
+  description = "IOPS for data disk (Premium SSD v2)"
+  type        = number
+  default     = 12000
+}
+
+variable "data_disk_throughput_mbps" {
+  description = "Throughput in MB/s for data disk (Premium SSD v2)"
+  type        = number
+  default     = 200
 }

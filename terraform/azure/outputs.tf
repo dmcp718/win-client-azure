@@ -32,3 +32,23 @@ output "mount_point" {
   value       = var.mount_point
   description = "Mount point for LucidLink filespace"
 }
+
+output "vm_size" {
+  value       = var.vm_size
+  description = "VM size/SKU"
+}
+
+output "data_disk_size_gb" {
+  value       = var.data_disk_size_gb
+  description = "Data disk size in GB"
+}
+
+output "data_disk_iops" {
+  value       = var.data_disk_iops
+  description = "Data disk IOPS"
+}
+
+output "data_disk_throughput_mbps" {
+  value       = var.data_disk_throughput_mbps
+  description = "Data disk throughput in MB/s"
+}

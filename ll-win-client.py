@@ -371,60 +371,78 @@ class LLWinClientAWSSetup:
             return self._get_fallback_gpu_instances()
 
     def _get_fallback_gpu_instances(self) -> List[Dict]:
-        """Fallback list of GPU instances if AWS API is unavailable"""
+        """Fallback list of Azure GPU VM sizes"""
         return [
             {
-                'type': 'g4dn.xlarge',
+                'type': 'Standard_NC4as_T4_v3',
                 'vcpu': 4,
-                'memory_gb': 16,
+                'memory_gb': 28,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
                 'gpu_name': 'T4',
                 'gpu_memory_gb': 16
             },
             {
-                'type': 'g4dn.2xlarge',
+                'type': 'Standard_NC8as_T4_v3',
                 'vcpu': 8,
-                'memory_gb': 32,
+                'memory_gb': 56,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
                 'gpu_name': 'T4',
                 'gpu_memory_gb': 16
             },
             {
-                'type': 'g4dn.4xlarge',
+                'type': 'Standard_NC16as_T4_v3',
                 'vcpu': 16,
-                'memory_gb': 64,
+                'memory_gb': 110,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
                 'gpu_name': 'T4',
                 'gpu_memory_gb': 16
             },
             {
-                'type': 'g5.xlarge',
-                'vcpu': 4,
-                'memory_gb': 16,
+                'type': 'Standard_NC64as_T4_v3',
+                'vcpu': 64,
+                'memory_gb': 440,
+                'gpu_count': 4,
+                'gpu_manufacturer': 'NVIDIA',
+                'gpu_name': 'T4',
+                'gpu_memory_gb': 64
+            },
+            {
+                'type': 'Standard_NV6ads_A10_v5',
+                'vcpu': 6,
+                'memory_gb': 55,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
-                'gpu_name': 'A10G',
+                'gpu_name': 'A10',
                 'gpu_memory_gb': 24
             },
             {
-                'type': 'g5.2xlarge',
-                'vcpu': 8,
-                'memory_gb': 32,
+                'type': 'Standard_NV12ads_A10_v5',
+                'vcpu': 12,
+                'memory_gb': 110,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
-                'gpu_name': 'A10G',
+                'gpu_name': 'A10',
                 'gpu_memory_gb': 24
             },
             {
-                'type': 'g5.4xlarge',
-                'vcpu': 16,
-                'memory_gb': 64,
+                'type': 'Standard_NV18ads_A10_v5',
+                'vcpu': 18,
+                'memory_gb': 220,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
-                'gpu_name': 'A10G',
+                'gpu_name': 'A10',
+                'gpu_memory_gb': 24
+            },
+            {
+                'type': 'Standard_NV36ads_A10_v5',
+                'vcpu': 36,
+                'memory_gb': 440,
+                'gpu_count': 1,
+                'gpu_manufacturer': 'NVIDIA',
+                'gpu_name': 'A10',
                 'gpu_memory_gb': 24
             }
         ]
