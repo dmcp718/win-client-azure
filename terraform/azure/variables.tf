@@ -83,5 +83,5 @@ variable "data_disk_iops" {
 variable "data_disk_throughput_mbps" {
   description = "Throughput in MB/s for data disk (Premium SSD v2)"
   type        = number
-  default     = 200
+  default     = 500
 }
