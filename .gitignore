@@ -74,7 +74,6 @@ Desktop.ini
 test-results-*.md
 TEST-*.md
 FINAL-*.md
-LUCIDLINK-*.md
 
 # DCV/RDP connection files (contain passwords)
 *.dcv
@@ -84,3 +83,6 @@ PASSWORDS.txt
 # Claude Code project instructions (local only)
 .claude/
 CLAUDE.md
+
+# LucidLink storage credentials (contains storage account key)
+lucidlink-azure-config.txt
