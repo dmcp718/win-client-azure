@@ -1177,9 +1177,8 @@ kdcproxyname:s:
                 if 'public_ips' in outputs:
                     console.print(f"Public IPs: {', '.join(outputs['public_ips'])}")
 
-                # Note: For Azure, software deployment (LucidLink, etc.) is handled by
+                # Note: Software deployment (LucidLink, etc.) is handled by
                 # Terraform Custom Script Extension during VM provisioning.
-                # No separate deployment script needed like AWS SSM approach.
                 console.print(f"\n[{self.colors['info']}]Software deployment is handled by Terraform Custom Script Extension[/]")
                 console.print(f"[dim]LucidLink and other software will be installed automatically during VM provisioning[/dim]")
 
