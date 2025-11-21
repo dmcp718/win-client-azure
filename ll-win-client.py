@@ -377,9 +377,9 @@ class LLWinClientAzureSetup:
                 'gpu_memory_gb': 16
             },
             {
-                'type': 'Standard_NC8as_T4_v3',
-                'vcpu': 8,
-                'memory_gb': 56,
+                'type': 'Standard_NC16as_T4_v3',
+                'vcpu': 16,
+                'memory_gb': 110,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
                 'gpu_name': 'T4',
