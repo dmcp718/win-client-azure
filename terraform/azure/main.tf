@@ -232,5 +232,5 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data" {
   managed_disk_id    = azurerm_managed_disk.data[count.index].id
   virtual_machine_id = azurerm_windows_virtual_machine.main[count.index].id
   lun                = 0
-  caching            = "ReadOnly"
+  caching            = "None"  # Premium SSD v2 does not support caching
 }
