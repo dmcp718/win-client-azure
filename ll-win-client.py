@@ -1386,26 +1386,28 @@ kdcproxyname:s:
         ))
         console.print()
 
-        # Check if there's anything to destroy
-        outputs = self.get_terraform_outputs()
-        if not outputs or 'vm_names' not in outputs:
-            console.print(f"[{self.colors['info']}]No client deployments found to destroy.[/]")
+        # Check if there's anything to destroy by checking terraform state
+        success, state_output = self.run_terraform_command(['state', 'list'])
+        if not success or not state_output.strip():
+            console.print(f"[{self.colors['info']}]No resources found in terraform state. Nothing to destroy.[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
-        vm_names = outputs.get('vm_names', [])
-        if not vm_names:
-            console.print(f"[{self.colors['info']}]No client instances to destroy.[/]")
-            Prompt.ask("\nPress Enter to continue")
-            return
+        # Get outputs if available (VM might not have been created)
+        outputs = self.get_terraform_outputs()
+        vm_names = outputs.get('vm_names', []) if outputs else []
 
         # Show what will be destroyed
         console.print("[bold]The following resources will be destroyed:[/bold]")
-        console.print(f"  • {len(vm_names)} client VM(s)")
-        for idx, vm_name in enumerate(vm_names, 1):
-            console.print(f"    - VM {idx}: {vm_name}")
+        if vm_names:
+            console.print(f"  • {len(vm_names)} client VM(s)")
+            for idx, vm_name in enumerate(vm_names, 1):
+                console.print(f"    - VM {idx}: {vm_name}")
+        else:
+            console.print(f"  • 0 VMs (VM creation may have failed, but other resources exist)")
         console.print(f"  • VNet and networking components")
         console.print(f"  • Azure Key Vault")
+        console.print(f"  • Data disks and other managed resources")
         console.print()
 
         # Single confirmation (skip if auto-approve is enabled)
