@@ -205,19 +205,19 @@ resource "azurerm_virtual_machine_extension" "lucidlink_install" {
   depends_on = [azurerm_key_vault_secret.lucidlink_password]
 }
 
-# Managed Data Disk for Media/Projects (Premium SSD v2)
+# Managed Data Disk for Media/Projects (Premium SSD)
 resource "azurerm_managed_disk" "data" {
   count                = var.instance_count
   name                 = "ll-win-${count.index + 1}-datadisk"
   location             = azurerm_resource_group.main.location
   resource_group_name  = azurerm_resource_group.main.name
-  storage_account_type = "PremiumV2_LRS"
+  storage_account_type = "Premium_LRS"  # Premium SSD (v1) - widely available
   create_option        = "Empty"
   disk_size_gb         = var.data_disk_size_gb
 
-  # Premium SSD v2 specific settings
-  disk_iops_read_write   = var.data_disk_iops
-  disk_mbps_read_write   = var.data_disk_throughput_mbps
+  # Note: Premium SSD v1 IOPS/throughput is based on disk size
+  # Use Premium SSD v2 (PremiumV2_LRS) if you need custom IOPS/throughput
+  # and have availability zone support in your region
 
   tags = merge(local.common_tags, {
     Purpose = "Media and Project Storage"
