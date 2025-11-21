@@ -206,6 +206,20 @@ resource "azurerm_virtual_machine_extension" "lucidlink_install" {
   depends_on = [azurerm_key_vault_secret.lucidlink_password]
 }
 
+# NVIDIA GPU Driver Extension
+resource "azurerm_virtual_machine_extension" "nvidia_gpu" {
+  count                      = var.instance_count
+  name                       = "NvidiaGpuDriverWindows"
+  virtual_machine_id         = azurerm_windows_virtual_machine.main[count.index].id
+  publisher                  = "Microsoft.HpcCompute"
+  type                       = "NvidiaGpuDriverWindows"
+  type_handler_version       = "1.6"
+  auto_upgrade_minor_version = true
+
+  tags       = local.common_tags
+  depends_on = [azurerm_virtual_machine_extension.lucidlink_install]
+}
+
 # Managed Data Disk for Media/Projects (Premium SSD v2)
 resource "azurerm_managed_disk" "data" {
   count                = var.instance_count
