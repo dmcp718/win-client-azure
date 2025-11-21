@@ -13,7 +13,7 @@ variable "resource_group_name" {
 variable "vm_size" {
   description = "Size of the VM"
   type        = string
-  default     = "Standard_NC16as_T4_v3"
+  default     = "Standard_NC8as_T4_v3"
 }
 
 variable "instance_count" {
