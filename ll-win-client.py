@@ -1454,151 +1454,92 @@ kdcproxyname:s:
         Prompt.ask("Press Enter to continue")
 
     def regenerate_connection_files(self):
-        """Regenerate DCV connection files on Desktop"""
+        """Regenerate RDP connection files on Desktop with existing credentials"""
         console.clear()
         self.show_banner()
 
         console.print(Panel.fit(
             "[bold]Regenerate Connection Files[/bold]\n"
-            "This will create fresh RDP files on your Desktop and set passwords automatically",
+            "This will create fresh RDP files on your Desktop with your admin credentials",
             border_style="blue"
         ))
         console.print()
 
         # Get terraform outputs
         outputs = self.get_terraform_outputs()
-        if not outputs or 'instance_ids' not in outputs:
-            console.print(f"[{self.colors['warning']}]No client deployments found.[/]")
+        if not outputs or 'vm_names' not in outputs:
+            console.print(f"[{self.colors['warning']}]No VM deployments found.[/]")
             console.print("Deploy infrastructure first using option 3.")
             Prompt.ask("\nPress Enter to continue")
             return
 
-        instance_ids = outputs.get('instance_ids', [])
+        vm_names = outputs.get('vm_names', [])
         public_ips = outputs.get('public_ips', [])
 
-        if not instance_ids or not public_ips:
-            console.print(f"[{self.colors['warning']}]No instances with public IPs found.[/]")
+        if not vm_names or not public_ips:
+            console.print(f"[{self.colors['warning']}]No VMs with public IPs found.[/]")
             Prompt.ask("\nPress Enter to continue")
             return
 
-        # Step 1: Set passwords via SSM
-        console.print(f"\n[bold yellow]Step 1: Setting Windows Administrator passwords via SSM...[/bold yellow]")
-        console.print(f"[dim]Generating one password for all instances (easier for tradeshow use)[/dim]")
-        console.print()
+        # Get admin credentials from config
+        admin_username = self.config.get('admin_username', 'azureuser')
+        admin_password = self.config.get('admin_password', '')
 
-        # Wait for SSM agents to be ready
-        ssm_ready = self.wait_for_ssm_ready(instance_ids, timeout_minutes=15)
-        console.print()
-
-        # Check if any instances are ready
-        ready_instances = [inst_id for inst_id, ready in ssm_ready.items() if ready]
-        not_ready_instances = [inst_id for inst_id, ready in ssm_ready.items() if not ready]
-
-        if not ready_instances:
-            console.print(f"[{self.colors['warning']}]⚠ No instances are ready for password setting yet[/]")
-            console.print(f"[dim]SSM agents are still initializing. Please try again in a few minutes.[/dim]")
-            console.print()
-            Prompt.ask("Press Enter to continue")
+        if not admin_password:
+            console.print(f"[{self.colors['warning']}]Admin password not found in configuration.[/]")
+            console.print("[dim]The password was set during deployment. Check your config file or CONNECTION_INFO.txt[/dim]")
+            Prompt.ask("\nPress Enter to continue")
             return
 
-        # Generate one password for all instances
-        shared_password = self.generate_secure_password()
-        console.print(f"[bold]Generated password: [green]{shared_password}[/green][/bold]")
-        console.print(f"[dim]Setting this password on ready instances...[/dim]")
-        console.print()
+        # Generate RDP files
+        console.print(f"[bold yellow]Generating RDP connection files...[/bold yellow]")
+        rdp_files = []
+        rdp_location = Path.home() / "Desktop" / "LucidLink-RDP"
+        rdp_location.mkdir(parents=True, exist_ok=True)
 
-        passwords = {}
-        success_count = 0
-
-        # Set password on ready instances
-        for idx, instance_id in enumerate(instance_ids, 1):
-            if instance_id in ready_instances:
-                console.print(f"Instance {idx} ({instance_id}):")
-                password = self.set_windows_password_via_ssm(instance_id, shared_password)
-                if password:
-                    passwords[instance_id] = password
-                    success_count += 1
-                else:
-                    console.print(f"[{self.colors['warning']}]⚠ Failed to set password[/]")
-                console.print()
-            else:
-                console.print(f"Instance {idx} ({instance_id}): [{self.colors['warning']}]Skipped - SSM not ready[/]")
-                console.print()
-
-        if success_count > 0:
-            console.print(f"[{self.colors['success']}]✓ Password set on {success_count}/{len(instance_ids)} instance(s)[/]")
-
-        if success_count < len(instance_ids):
-            console.print()
-            console.print(f"[{self.colors['info']}]Note: {len(instance_ids) - success_count} instance(s) not ready[/]")
-            console.print(f"[dim]Run this option again later to set passwords on remaining instances[/dim]")
-
-        console.print()
-
-        # Step 2: Generate DCV files
-        console.print(f"[bold yellow]Step 2: Generating connection files...[/bold yellow]")
-        dcv_files = []
-
-        for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-            instance_name = f"ll-win-client-{idx + 1}"
-
-            # Generate DCV file with password
+        for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips), 1):
             try:
-                dcv_file = self.generate_dcv_file(public_ip, instance_name, password=shared_password)
-                dcv_files.append(dcv_file)
-                console.print(f"  [{self.colors['success']}]✓[/] DCV: {instance_name}.dcv")
+                rdp_file = self.generate_rdp_file(public_ip, vm_name, username=admin_username, password=admin_password)
+                rdp_files.append(rdp_file)
+                console.print(f"  [{self.colors['success']}]✓[/] RDP: {vm_name}.rdp")
             except Exception as e:
-                console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate DCV file for {instance_name}: {e}")
+                console.print(f"  [{self.colors['warning']}]⚠[/] Failed to generate RDP file for {vm_name}: {e}")
 
-        dcv_location = Path.home() / "Desktop" / "LucidLink-DCV"
+        # Save connection info to file
+        console.print()
+        console.print(f"[bold yellow]Saving connection info...[/bold yellow]")
+        connection_file = rdp_location / "CONNECTION_INFO.txt"
+        with open(connection_file, 'w') as f:
+            f.write("Azure Windows VM Connection Information\n")
+            f.write("=" * 60 + "\n\n")
+            f.write("IMPORTANT: Keep this file secure!\n\n")
+            f.write(f"Admin Credentials:\n")
+            f.write(f"  Username: {admin_username}\n")
+            f.write(f"  Password: {admin_password}\n\n")
+            f.write("Virtual Machines:\n")
+            for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips), 1):
+                f.write(f"  {idx}. {vm_name}\n")
+                f.write(f"     Public IP: {public_ip}\n")
+                f.write(f"     RDP Port: 3389\n\n")
 
-        # Step 3: Save passwords to file
-        if passwords:
-            console.print()
-            console.print(f"[bold yellow]Step 3: Saving password to file...[/bold yellow]")
-            password_file = dcv_location / "PASSWORDS.txt"
-            with open(password_file, 'w') as f:
-                f.write("Windows Administrator Password\n")
-                f.write("=" * 60 + "\n\n")
-                f.write("IMPORTANT: Keep this file secure!\n\n")
-                f.write(f"ONE PASSWORD FOR ALL INSTANCES:\n")
-                f.write(f"  Password: {shared_password}\n\n")
-                f.write("This password works for:\n")
-                for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips), 1):
-                    status = "✓ Password set" if instance_id in passwords else "✗ Not set"
-                    f.write(f"  {idx}. {instance_id} ({public_ip}) - {status}\n")
-                f.write("\nConnection Info:\n")
-                f.write("  Username: Administrator\n")
-                f.write(f"  Password: {shared_password}\n")
-                f.write("  (Same password for all instances)\n")
+        console.print(f"  [{self.colors['success']}]✓[/] Connection info saved to: {connection_file}")
 
-            console.print(f"  [{self.colors['success']}]✓[/] Password saved to: {password_file}")
-
-            # Display password in terminal
-            console.print()
-            console.print(Panel.fit(
-                f"[bold]Windows Administrator Password[/bold]\n\n"
-                f"[bold green]{shared_password}[/bold green]\n\n"
-                f"[dim]This password works for ALL {len(instance_ids)} instance(s)[/dim]",
-                border_style="green",
-                title="Copy this password"
-            ))
-
+        # Display summary
         console.print()
         console.print(Panel.fit(
-            f"[{self.colors['success']}]Setup completed successfully![/]\n\n"
-            f"Location: [bold]{dcv_location}[/bold]\n\n"
-            f"DCV Files: {len(dcv_files)}\n"
-            f"Passwords Set: {len(passwords)}/{len(instance_ids)}",
+            f"[{self.colors['success']}]Connection files regenerated successfully![/]\n\n"
+            f"Location: [bold]{rdp_location}[/bold]\n\n"
+            f"RDP Files: {len(rdp_files)}\n"
+            f"VMs: {len(vm_names)}",
             border_style="green"
         ))
 
         console.print()
         console.print(f"[bold]To connect:[/bold]")
-        console.print(f"1. Open your Desktop and find the 'LucidLink-DCV' folder")
-        console.print(f"2. Double-click the .dcv file for the instance you want to access")
-        console.print(f"3. When DCV prompts, enter Username: [bold]Administrator[/bold]")
-        console.print(f"4. Password will auto-fill (or see PASSWORDS.txt in LucidLink-DCV folder)")
+        console.print(f"1. Open your Desktop and find the 'LucidLink-RDP' folder")
+        console.print(f"2. Double-click the .rdp file for the VM you want to access")
+        console.print(f"3. Click 'Connect' when prompted")
+        console.print(f"4. Credentials are embedded in the RDP file")
 
         console.print()
         Prompt.ask("Press Enter to continue")
