@@ -6,15 +6,8 @@ locals {
   }
 }
 
-# Random string for Key Vault name (must be globally unique)
-resource "random_string" "keyvault_suffix" {
-  length  = 8
-  special = false
-  upper   = false
-}
-
 # Data source for current Azure client config
-data "azurerm_client_config" "current" {}
+# data "azurerm_client_config" "current" {}
 
 # Resource Group
 resource "azurerm_resource_group" "main" {
@@ -96,7 +89,7 @@ resource "azurerm_network_interface_security_group_association" "main" {
   network_security_group_id = azurerm_network_security_group.main.id
 }
 
-# User Assigned Identity for VMs
+# User Assigned Identity for VMs (currently unused, but keeping for future use)
 resource "azurerm_user_assigned_identity" "vm_identity" {
   name                = "ll-win-client-identity"
   location            = azurerm_resource_group.main.location
@@ -104,53 +97,9 @@ resource "azurerm_user_assigned_identity" "vm_identity" {
   tags                = local.common_tags
 }
 
-# Key Vault for storing LucidLink credentials
-resource "azurerm_key_vault" "main" {
-  name                       = "ll-kv-${random_string.keyvault_suffix.result}"
-  location                   = azurerm_resource_group.main.location
-  resource_group_name        = azurerm_resource_group.main.name
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
-  soft_delete_retention_days = 7
-  purge_protection_enabled   = false
-
-  # Access policy for the current user/service principal
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = data.azurerm_client_config.current.object_id
-
-    secret_permissions = [
-      "Get",
-      "List",
-      "Set",
-      "Delete",
-      "Recover",
-      "Backup",
-      "Restore",
-      "Purge",
-    ]
-  }
-
-  # Access policy for the VM's managed identity
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = azurerm_user_assigned_identity.vm_identity.principal_id
-
-    secret_permissions = [
-      "Get",
-      "List",
-    ]
-  }
-
-  tags = local.common_tags
-}
-
-# Store LucidLink password in Key Vault
-resource "azurerm_key_vault_secret" "lucidlink_password" {
-  name         = "lucidlink-password"
-  value        = var.filespace_password
-  key_vault_id = azurerm_key_vault.main.id
-}
+# Key Vault removed - caused slow destroy times (9+ minutes)
+# Password is in terraform.tfvars (sensitive), Key Vault not needed
+# If needed in future, uncomment and add back purge_soft_delete_on_destroy
 
 # Windows 11 Virtual Machines
 resource "azurerm_windows_virtual_machine" "main" {
@@ -203,7 +152,6 @@ resource "azurerm_virtual_machine_extension" "lucidlink_install" {
   })
 
   tags       = local.common_tags
-  depends_on = [azurerm_key_vault_secret.lucidlink_password]
 }
 
 # NVIDIA GPU Driver Extension

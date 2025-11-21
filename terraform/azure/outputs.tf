@@ -13,11 +13,6 @@ output "public_ips" {
   description = "Public IP addresses of the VMs"
 }
 
-output "key_vault_name" {
-  value       = azurerm_key_vault.main.name
-  description = "Name of the Key Vault"
-}
-
 output "admin_username" {
   value       = var.admin_username
   description = "Admin username for RDP access"
