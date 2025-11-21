@@ -1385,14 +1385,14 @@ preferred-video-codec=h264
 
         # Show deployment summary
         console.print("[bold]Deployment Summary:[/bold]")
-        console.print(f"  • Location: {self.config.get('location', 'eastus')}")
-        console.print(f"  • VNet CIDR: {self.config.get('vnet_cidr', '10.0.0.0/16')}")
-        console.print(f"  • VM Size: {self.config.get('vm_size', 'Standard_NC16as_T4_v3')}")
-        console.print(f"  • VM Count: {self.config.get('instance_count', 1)}")
-        console.print(f"  • OS Disk: {self.config.get('os_disk_size_gb', 256)} GB")
-        console.print(f"  • Data Disk: {self.config.get('data_disk_size_gb', 2048)} GB")
-        console.print(f"  • Filespace: {self.config.get('filespace_domain', 'Not set')}")
-        console.print(f"  • Mount Point: {self.config.get('mount_point', 'L:')}")
+        console.print(f"  • Location: {self.config.get('location', 'Not configured')}")
+        console.print(f"  • VNet CIDR: {self.config.get('vnet_cidr', 'Not configured')}")
+        console.print(f"  • VM Size: {self.config.get('vm_size', 'Not configured')}")
+        console.print(f"  • VM Count: {self.config.get('instance_count', 'Not configured')}")
+        console.print(f"  • OS Disk: {self.config.get('os_disk_size_gb', 'Not configured')} GB")
+        console.print(f"  • Data Disk: {self.config.get('data_disk_size_gb', 'Not configured')} GB")
+        console.print(f"  • Filespace: {self.config.get('filespace_domain', 'Not configured')}")
+        console.print(f"  • Mount Point: {self.config.get('mount_point', 'Not configured')}")
         console.print()
 
         # Confirm deployment (skip if auto-approve is enabled)
@@ -1799,7 +1799,7 @@ preferred-video-codec=h264
         summary_table.add_row("Total VMs", str(len(vm_names)))
         summary_table.add_row("Filespace Domain", filespace_domain)
         summary_table.add_row("Mount Point", mount_point)
-        summary_table.add_row("Location", self.config.get('location', 'eastus'))
+        summary_table.add_row("Location", self.config.get('location', 'Not configured'))
         summary_table.add_row("Resource Group", outputs.get('resource_group_name', 'unknown'))
 
         console.print(summary_table)
