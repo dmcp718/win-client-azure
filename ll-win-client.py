@@ -533,7 +533,7 @@ class LLWinClientAWSSetup:
         console.print("[dim]Common locations: eastus, eastus2, westus2, centralus, westeurope[/dim]")
         config['location'] = Prompt.ask(
             "Azure Location",
-            default=existing_config.get('location', 'eastus2')
+            default=existing_config.get('location', 'eastus')
         )
         console.print()
 
