@@ -1177,114 +1177,11 @@ kdcproxyname:s:
                 if 'public_ips' in outputs:
                     console.print(f"Public IPs: {', '.join(outputs['public_ips'])}")
 
-                # Run deployment script to install DCV, LucidLink, etc.
-                console.print(f"\n[bold]Step 6: Running deployment script on instances...[/bold]")
-                instance_ids = outputs.get('instance_ids', [])
-                public_ips = outputs.get('public_ips', [])
-                region = self.config.get('region', 'us-east-1')
-
-                # Generate password and save to file
-                dcv_password = self.generate_secure_password(16)
-                passwords_file = Path.home() / "Desktop" / "LucidLink-DCV" / "PASSWORDS.txt"
-                passwords_file.parent.mkdir(parents=True, exist_ok=True)
-
-                with open(passwords_file, 'w') as f:
-                    f.write("Windows Administrator Password\n")
-                    f.write("=" * 60 + "\n\n")
-                    f.write("IMPORTANT: Keep this file secure!\n\n")
-                    f.write("ONE PASSWORD FOR ALL INSTANCES:\n")
-                    f.write(f"  Password: {dcv_password}\n\n")
-                    f.write("This password works for:\n")
-                    for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                        f.write(f"  {idx + 1}. {instance_id} ({public_ip}) - ✓ Password set\n")
-                    f.write("\nConnection Info:\n")
-                    f.write("  Username: Administrator\n")
-                    f.write(f"  Password: {dcv_password}\n")
-                    f.write("  (Same password for all instances)\n")
-
-                console.print(f"  [{self.colors['info']}]Generated DCV password and saved to {passwords_file}[/]")
-
-                # Wait for SSM and run deployment script on each instance
-                deployment_script = self.script_dir / "deployment" / "deploy-windows-client.sh"
-
-                for idx, instance_id in enumerate(instance_ids):
-                    instance_name = f"ll-win-client-{idx + 1}"
-                    console.print(f"\n  [{self.colors['info']}]Deploying software to {instance_name} ({instance_id})...[/]")
-
-                    # Wait for instance to be fully ready
-                    console.print(f"    Waiting for instance to be ready...")
-                    max_wait = 300  # 5 minutes
-                    wait_interval = 10
-                    ssm_online = False
-
-                    for attempt in range(max_wait // wait_interval):
-                        try:
-                            # Check EC2 instance state
-                            ec2_result = subprocess.run(
-                                ['aws', 'ec2', 'describe-instances',
-                                 '--instance-ids', instance_id,
-                                 '--region', region,
-                                 '--query', 'Reservations[0].Instances[0].State.Name',
-                                 '--output', 'text'],
-                                capture_output=True,
-                                text=True,
-                                timeout=10
-                            )
-                            instance_state = ec2_result.stdout.strip()
-
-                            # Check SSM agent status
-                            ssm_result = subprocess.run(
-                                ['aws', 'ssm', 'describe-instance-information',
-                                 '--filters', f'Key=InstanceIds,Values={instance_id}',
-                                 '--region', region,
-                                 '--query', 'InstanceInformationList[0].PingStatus',
-                                 '--output', 'text'],
-                                capture_output=True,
-                                text=True,
-                                timeout=10
-                            )
-                            ssm_status = ssm_result.stdout.strip()
-
-                            if instance_state == 'running' and ssm_status == 'Online':
-                                if not ssm_online:
-                                    console.print(f"    [{self.colors['success']}]✓[/] Instance running and SSM agent online")
-                                    console.print(f"    Waiting 60 seconds for Windows initialization...")
-                                    ssm_online = True
-                                    time.sleep(60)  # Buffer period for Windows to fully initialize
-                                console.print(f"    [{self.colors['success']}]✓[/] Instance ready for deployment")
-                                break
-                        except:
-                            pass
-                        time.sleep(wait_interval)
-
-                    if not ssm_online:
-                        console.print(f"    [{self.colors['warning']}]⚠[/] Instance may not be fully ready, proceeding anyway...")
-                        logger.warning(f"Instance {instance_id} did not fully initialize within timeout")
-
-                    # Run deployment script
-                    console.print(f"    Running deployment script (this takes ~5-10 minutes)...")
-                    try:
-                        env = os.environ.copy()
-                        env['DCV_ADMIN_PASSWORD'] = dcv_password
-                        # Pass LucidLink auto-configuration flag
-                        env['AUTO_CONFIGURE_LUCIDLINK'] = '1' if self.config.get('auto_configure_lucidlink') == 'yes' else '0'
-                        result = subprocess.run(
-                            [str(deployment_script), instance_id, region],
-                            env=env,
-                            capture_output=True,
-                            text=True,
-                            timeout=1200  # 20 minutes
-                        )
-                        if result.returncode == 0:
-                            console.print(f"    [{self.colors['success']}]✓[/] Deployment completed successfully")
-                        else:
-                            console.print(f"    [{self.colors['error']}]✗[/] Deployment failed - check logs")
-                            logger.error(f"Deployment script failed for {instance_id}: {result.stderr}")
-                    except subprocess.TimeoutExpired:
-                        console.print(f"    [{self.colors['warning']}]⚠[/] Deployment timed out - may still be running")
-                    except Exception as e:
-                        console.print(f"    [{self.colors['error']}]✗[/] Deployment error: {e}")
-                        logger.error(f"Deployment script error for {instance_id}: {e}")
+                # Note: For Azure, software deployment (LucidLink, etc.) is handled by
+                # Terraform Custom Script Extension during VM provisioning.
+                # No separate deployment script needed like AWS SSM approach.
+                console.print(f"\n[{self.colors['info']}]Software deployment is handled by Terraform Custom Script Extension[/]")
+                console.print(f"[dim]LucidLink and other software will be installed automatically during VM provisioning[/dim]")
 
                 # Generate connection files for each VM
                 console.print(f"\n[bold]Generating connection files...[/bold]")
@@ -1734,100 +1631,119 @@ kdcproxyname:s:
             Prompt.ask("Press Enter to continue")
             return
 
-        console.print(f"Found {len(instance_ids)} instance(s):")
+        console.print(f"Found {len(instance_ids)} VM(s):")
         for idx, instance_id in enumerate(instance_ids):
             console.print(f"  {idx + 1}. {instance_id}")
         console.print()
 
-        # Check current status
-        import boto3
-        region = self.config.get('region', 'us-east-1')
-        ec2 = boto3.client('ec2', region_name=region)
+        # Check current status using Azure CLI
+        resource_group = self.config.get('resource_group_name', 'll-win-client-rg')
 
         try:
-            response = ec2.describe_instances(InstanceIds=instance_ids)
-            running_instances = []
-            for reservation in response['Reservations']:
-                for instance in reservation['Instances']:
-                    state = instance['State']['Name']
-                    console.print(f"  {instance['InstanceId']}: [{self.colors['info']}]{state}[/]")
-                    if state == 'running':
-                        running_instances.append(instance['InstanceId'])
+            # Get VM statuses
+            result = subprocess.run(
+                ['az', 'vm', 'list',
+                 '--resource-group', resource_group,
+                 '--query', '[].{name:name, state:powerState}',
+                 '--output', 'json'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
 
-            if not running_instances:
-                console.print(f"\n[{self.colors['warning']}]No running instances to stop.[/]")
+            if result.returncode != 0:
+                console.print(f"[{self.colors['error']}]Failed to get VM statuses: {result.stderr}[/]")
                 console.print()
                 Prompt.ask("Press Enter to continue")
                 return
 
-            console.print(f"\n[{self.colors['warning']}]This will stop {len(running_instances)} running instance(s).[/]")
-            console.print(f"[{self.colors['info']}]Stopped instances still incur storage charges but not compute charges.[/]")
+            vm_statuses = json.loads(result.stdout)
+            running_vms = []
 
-            if not Confirm.ask("\nProceed with stopping instances?", default=False):
+            # Display status and collect running VMs
+            for vm in vm_statuses:
+                vm_name = vm['name']
+                state = vm['state']
+                console.print(f"  {vm_name}: [{self.colors['info']}]{state}[/]")
+                if 'VM running' in state:
+                    running_vms.append(vm_name)
+
+            if not running_vms:
+                console.print(f"\n[{self.colors['warning']}]No running VMs to stop.[/]")
+                console.print()
+                Prompt.ask("Press Enter to continue")
+                return
+
+            console.print(f"\n[{self.colors['warning']}]This will deallocate {len(running_vms)} running VM(s).[/]")
+            console.print(f"[{self.colors['info']}]Deallocated VMs do not incur compute charges (only storage).[/]")
+            console.print(f"[dim]Note: Using 'deallocate' instead of 'stop' to avoid continued compute billing.[/dim]")
+
+            if not Confirm.ask("\nProceed with deallocating VMs?", default=False):
                 console.print(f"[{self.colors['info']}]Operation cancelled.[/]")
                 console.print()
                 Prompt.ask("Press Enter to continue")
                 return
 
-            # Attempt graceful shutdown via SSM first
-            console.print(f"\n[bold yellow]Initiating graceful Windows shutdown...[/bold yellow]")
+            # Deallocate VMs (stops billing for compute)
+            console.print(f"\n[bold yellow]Deallocating VMs...[/bold yellow]")
+            console.print(f"[dim]This may take a few minutes...[/dim]")
 
-            try:
-                ssm = boto3.client('ssm', region_name=region)
+            # Get VM resource IDs for the running VMs
+            vm_ids = [vm_id for vm_id in instance_ids if any(vm_name in vm_id for vm_name in running_vms)]
 
-                # Send shutdown command to Windows
-                console.print(f"[{self.colors['info']}]Sending shutdown command via AWS Systems Manager...[/]")
-                ssm.send_command(
-                    InstanceIds=running_instances,
-                    DocumentName='AWS-RunPowerShellScript',
-                    Parameters={
-                        'commands': [
-                            'shutdown /s /t 30 /c "Graceful shutdown initiated by LucidLink deployment tool"'
-                        ]
-                    },
-                    TimeoutSeconds=60
-                )
+            deallocate_result = subprocess.run(
+                ['az', 'vm', 'deallocate',
+                 '--ids'] + vm_ids + ['--no-wait'],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
 
-                console.print(f"[{self.colors['success']}]✓ Shutdown command sent to Windows[/]")
-                console.print(f"[dim]Windows will shutdown gracefully in 30 seconds...[/dim]")
+            if deallocate_result.returncode == 0:
+                console.print(f"[{self.colors['success']}]✓ Deallocation initiated for {len(running_vms)} VM(s)[/]")
+                console.print(f"[dim]VMs are shutting down in the background...[/dim]")
 
-                # Wait for instances to stop (Windows shutdown will trigger EC2 stop)
-                console.print(f"\n[bold yellow]Waiting for graceful shutdown to complete...[/bold yellow]")
-                with console.status("[bold yellow]Monitoring shutdown progress...[/bold yellow]"):
-                    waiter = ec2.get_waiter('instance_stopped')
-                    try:
-                        # Wait up to 5 minutes for graceful shutdown
-                        waiter.wait(
-                            InstanceIds=running_instances,
-                            WaiterConfig={'Delay': 15, 'MaxAttempts': 20}
+                # Wait for VMs to deallocate
+                console.print(f"\n[bold yellow]Waiting for VMs to deallocate...[/bold yellow]")
+                with console.status("[bold yellow]Monitoring deallocation progress...[/bold yellow]"):
+                    all_deallocated = False
+                    max_attempts = 40  # 40 attempts * 15 seconds = 10 minutes
+                    for attempt in range(max_attempts):
+                        time.sleep(15)
+
+                        # Check status
+                        check_result = subprocess.run(
+                            ['az', 'vm', 'list',
+                             '--resource-group', resource_group,
+                             '--query', '[].{name:name, state:powerState}',
+                             '--output', 'json'],
+                            capture_output=True,
+                            text=True,
+                            timeout=30
                         )
-                        console.print(f"[{self.colors['success']}]✓ Instances shut down gracefully[/]")
-                    except Exception as wait_error:
-                        # Graceful shutdown timed out, force stop
-                        logger.warning(f"Graceful shutdown timed out, forcing stop: {wait_error}")
-                        console.print(f"\n[{self.colors['warning']}]Graceful shutdown timed out, forcing stop...[/]")
-                        ec2.stop_instances(InstanceIds=running_instances)
-                        waiter.wait(InstanceIds=running_instances)
-                        console.print(f"[{self.colors['warning']}]⚠ Instances force-stopped[/]")
 
-            except Exception as ssm_error:
-                # SSM command failed, fall back to direct EC2 stop
-                logger.warning(f"SSM graceful shutdown failed, using direct stop: {ssm_error}")
-                console.print(f"\n[{self.colors['warning']}]Graceful shutdown unavailable, using direct stop...[/]")
-                console.print(f"[dim]Reason: {str(ssm_error)}[/dim]")
+                        if check_result.returncode == 0:
+                            statuses = json.loads(check_result.stdout)
+                            running_count = sum(1 for vm in statuses if 'VM running' in vm['state'] and vm['name'] in running_vms)
 
-                ec2.stop_instances(InstanceIds=running_instances)
-                with console.status("[bold yellow]Waiting for instances to stop...[/bold yellow]"):
-                    waiter = ec2.get_waiter('instance_stopped')
-                    waiter.wait(InstanceIds=running_instances)
-                console.print(f"[{self.colors['warning']}]⚠ Instances stopped (non-graceful)[/]")
+                            if running_count == 0:
+                                all_deallocated = True
+                                break
 
-            console.print(f"\n[{self.colors['success']}]✓ Successfully stopped {len(running_instances)} instance(s)[/]")
-            console.print(f"\n[{self.colors['info']}]To resume work, use 'Start All Instances' from the main menu.[/]")
+                    if all_deallocated:
+                        console.print(f"[{self.colors['success']}]✓ VMs deallocated successfully[/]")
+                    else:
+                        console.print(f"[{self.colors['warning']}]⚠ Some VMs may still be deallocating[/]")
+                        console.print(f"[dim]Check Azure Portal for final status[/dim]")
+
+                console.print(f"\n[{self.colors['success']}]✓ Successfully deallocated {len(running_vms)} VM(s)[/]")
+                console.print(f"\n[{self.colors['info']}]To resume work, use 'Start All Instances' from the main menu.[/]")
+            else:
+                console.print(f"[{self.colors['error']}]Failed to deallocate VMs: {deallocate_result.stderr}[/]")
 
         except Exception as e:
-            console.print(f"\n[{self.colors['error']}]Error stopping instances: {e}[/]")
-            logger.error(f"Error stopping instances: {e}", exc_info=True)
+            console.print(f"\n[{self.colors['error']}]Error stopping VMs: {e}[/]")
+            logger.error(f"Error stopping VMs: {e}", exc_info=True)
 
         console.print()
         Prompt.ask("Press Enter to continue")
@@ -1859,91 +1775,170 @@ kdcproxyname:s:
             Prompt.ask("Press Enter to continue")
             return
 
-        console.print(f"Found {len(instance_ids)} instance(s):")
+        console.print(f"Found {len(instance_ids)} VM(s):")
         for idx, instance_id in enumerate(instance_ids):
             console.print(f"  {idx + 1}. {instance_id}")
         console.print()
 
-        # Check current status
-        import boto3
-        region = self.config.get('region', 'us-east-1')
-        ec2 = boto3.client('ec2', region_name=region)
+        # Check current status using Azure CLI
+        resource_group = self.config.get('resource_group_name', 'll-win-client-rg')
 
         try:
-            response = ec2.describe_instances(InstanceIds=instance_ids)
-            stopped_instances = []
-            for reservation in response['Reservations']:
-                for instance in reservation['Instances']:
-                    state = instance['State']['Name']
-                    console.print(f"  {instance['InstanceId']}: [{self.colors['info']}]{state}[/]")
-                    if state == 'stopped':
-                        stopped_instances.append(instance['InstanceId'])
+            # Get VM statuses
+            result = subprocess.run(
+                ['az', 'vm', 'list',
+                 '--resource-group', resource_group,
+                 '--query', '[].{name:name, state:powerState}',
+                 '--output', 'json'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
 
-            if not stopped_instances:
-                console.print(f"\n[{self.colors['warning']}]No stopped instances to start.[/]")
+            if result.returncode != 0:
+                console.print(f"[{self.colors['error']}]Failed to get VM statuses: {result.stderr}[/]")
                 console.print()
                 Prompt.ask("Press Enter to continue")
                 return
 
-            console.print(f"\n[{self.colors['info']}]This will start {len(stopped_instances)} stopped instance(s).[/]")
-            console.print(f"[{self.colors['warning']}]Compute charges will resume once instances are running.[/]")
+            vm_statuses = json.loads(result.stdout)
+            stopped_vms = []
 
-            if not Confirm.ask("\nProceed with starting instances?", default=True):
+            # Display status and collect stopped/deallocated VMs
+            for vm in vm_statuses:
+                vm_name = vm['name']
+                state = vm['state']
+                console.print(f"  {vm_name}: [{self.colors['info']}]{state}[/]")
+                if 'VM running' not in state:
+                    stopped_vms.append(vm_name)
+
+            if not stopped_vms:
+                console.print(f"\n[{self.colors['warning']}]No stopped VMs to start.[/]")
+                console.print()
+                Prompt.ask("Press Enter to continue")
+                return
+
+            console.print(f"\n[{self.colors['info']}]This will start {len(stopped_vms)} stopped VM(s).[/]")
+            console.print(f"[{self.colors['warning']}]Compute charges will resume once VMs are running.[/]")
+
+            if not Confirm.ask("\nProceed with starting VMs?", default=True):
                 console.print(f"[{self.colors['info']}]Operation cancelled.[/]")
                 console.print()
                 Prompt.ask("Press Enter to continue")
                 return
 
-            # Start instances
-            console.print(f"\n[bold green]Starting instances...[/bold green]")
-            ec2.start_instances(InstanceIds=stopped_instances)
+            # Start VMs
+            console.print(f"\n[bold green]Starting VMs...[/bold green]")
+            console.print(f"[dim]This may take a few minutes...[/dim]")
 
-            # Wait for running state
-            with console.status("[bold green]Waiting for instances to start...[/bold green]"):
-                waiter = ec2.get_waiter('instance_running')
-                waiter.wait(InstanceIds=stopped_instances)
+            # Get VM resource IDs for the stopped VMs
+            vm_ids = [vm_id for vm_id in instance_ids if any(vm_name in vm_id for vm_name in stopped_vms)]
 
-            console.print(f"\n[{self.colors['success']}]✓ Successfully started {len(stopped_instances)} instance(s)[/]")
+            start_result = subprocess.run(
+                ['az', 'vm', 'start',
+                 '--ids'] + vm_ids + ['--no-wait'],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
 
-            # Get NEW public IPs after start (they changed!)
-            console.print(f"\n[{self.colors['info']}]Updating DCV connection files with new IP addresses...[/]")
-            response = ec2.describe_instances(InstanceIds=instance_ids)
-            public_ips = []
-            for reservation in response['Reservations']:
-                for instance in reservation['Instances']:
-                    public_ip = instance.get('PublicIpAddress', 'N/A')
-                    public_ips.append(public_ip)
+            if start_result.returncode == 0:
+                console.print(f"[{self.colors['success']}]✓ Start initiated for {len(stopped_vms)} VM(s)[/]")
+                console.print(f"[dim]VMs are starting in the background...[/dim]")
 
-            # Try to read existing password from PASSWORDS.txt
-            password = None
-            dcv_location = Path.home() / "Desktop" / "LucidLink-DCV"
-            password_file = dcv_location / "PASSWORDS.txt"
-            if password_file.exists():
-                try:
-                    with open(password_file, 'r') as f:
-                        for line in f:
-                            if line.strip().startswith("Password:"):
-                                password = line.split(":", 1)[1].strip()
+                # Wait for VMs to start
+                console.print(f"\n[bold green]Waiting for VMs to start...[/bold green]")
+                with console.status("[bold green]Monitoring startup progress...[/bold green]"):
+                    all_running = False
+                    max_attempts = 40  # 40 attempts * 15 seconds = 10 minutes
+                    for attempt in range(max_attempts):
+                        time.sleep(15)
+
+                        # Check status
+                        check_result = subprocess.run(
+                            ['az', 'vm', 'list',
+                             '--resource-group', resource_group,
+                             '--query', '[].{name:name, state:powerState}',
+                             '--output', 'json'],
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+
+                        if check_result.returncode == 0:
+                            statuses = json.loads(check_result.stdout)
+                            running_count = sum(1 for vm in statuses if 'VM running' in vm['state'] and vm['name'] in stopped_vms)
+
+                            if running_count == len(stopped_vms):
+                                all_running = True
                                 break
-                except Exception as e:
-                    logger.warning(f"Could not read password from file: {e}")
 
-            # Regenerate DCV files with new IPs
-            for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
-                instance_name = f"ll-win-client-{idx + 1}"
-                try:
-                    self.generate_dcv_file(public_ip, instance_name, password=password)
-                    console.print(f"  [{self.colors['success']}]✓[/] Updated: {instance_name}.dcv ({public_ip})")
-                except Exception as e:
-                    logger.warning(f"Failed to regenerate DCV file: {e}")
+                    if all_running:
+                        console.print(f"[{self.colors['success']}]✓ VMs started successfully[/]")
+                    else:
+                        console.print(f"[{self.colors['warning']}]⚠ Some VMs may still be starting[/]")
+                        console.print(f"[dim]Check Azure Portal for final status[/dim]")
 
-            console.print(f"\n[{self.colors['success']}]✓ DCV connection files updated with new IP addresses[/]")
-            console.print(f"[{self.colors['info']}]Connection files: ~/Desktop/LucidLink-DCV/[/]")
-            console.print(f"[dim]Note: Public IPs change when instances are stopped/started[/dim]")
+                console.print(f"\n[{self.colors['success']}]✓ Successfully started {len(stopped_vms)} VM(s)[/]")
+
+                # Get updated public IPs
+                console.print(f"\n[{self.colors['info']}]Updating RDP connection files with new IP addresses...[/]")
+
+                # Get all VMs with their public IPs
+                ip_result = subprocess.run(
+                    ['az', 'vm', 'list-ip-addresses',
+                     '--resource-group', resource_group,
+                     '--output', 'json'],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+
+                public_ips = []
+                if ip_result.returncode == 0:
+                    ip_data = json.loads(ip_result.stdout)
+                    for vm in ip_data:
+                        # Extract public IP from the nested structure
+                        public_ip = "N/A"
+                        if vm.get('virtualMachine', {}).get('network', {}).get('publicIpAddresses'):
+                            public_ip_list = vm['virtualMachine']['network']['publicIpAddresses']
+                            if public_ip_list:
+                                public_ip = public_ip_list[0].get('ipAddress', 'N/A')
+                        public_ips.append(public_ip)
+
+                # Try to read existing password from CONNECTION_INFO.txt
+                password = None
+                rdp_location = Path.home() / "Desktop" / "LucidLink-RDP"
+                password_file = rdp_location / "CONNECTION_INFO.txt"
+                if password_file.exists():
+                    try:
+                        with open(password_file, 'r') as f:
+                            for line in f:
+                                if line.strip().startswith("Password:"):
+                                    password = line.split(":", 1)[1].strip()
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Could not read password from file: {e}")
+
+                # Regenerate RDP files with new IPs
+                admin_username = self.config.get('admin_username', 'azureuser')
+                for idx, (instance_id, public_ip) in enumerate(zip(instance_ids, public_ips)):
+                    instance_name = f"ll-win-client-{idx + 1}"
+                    try:
+                        self.generate_rdp_file(public_ip, instance_name, username=admin_username)
+                        console.print(f"  [{self.colors['success']}]✓[/] Updated: {instance_name}.rdp ({public_ip})")
+                    except Exception as e:
+                        logger.warning(f"Failed to regenerate RDP file: {e}")
+
+                console.print(f"\n[{self.colors['success']}]✓ RDP connection files updated with new IP addresses[/]")
+                console.print(f"[{self.colors['info']}]Connection files: ~/Desktop/LucidLink-RDP/[/]")
+                console.print(f"[dim]Note: Public IPs may change when VMs are stopped/started[/dim]")
+            else:
+                console.print(f"[{self.colors['error']}]Failed to start VMs: {start_result.stderr}[/]")
 
         except Exception as e:
-            console.print(f"\n[{self.colors['error']}]Error starting instances: {e}[/]")
-            logger.error(f"Error starting instances: {e}", exc_info=True)
+            console.print(f"\n[{self.colors['error']}]Error starting VMs: {e}[/]")
+            logger.error(f"Error starting VMs: {e}", exc_info=True)
 
         console.print()
         Prompt.ask("Press Enter to continue")
