@@ -377,9 +377,9 @@ class LLWinClientAzureSetup:
                 'gpu_memory_gb': 16
             },
             {
-                'type': 'Standard_NC16as_T4_v3',
-                'vcpu': 16,
-                'memory_gb': 110,
+                'type': 'Standard_NC8as_T4_v3',
+                'vcpu': 8,
+                'memory_gb': 56,
                 'gpu_count': 1,
                 'gpu_manufacturer': 'NVIDIA',
                 'gpu_name': 'T4',
@@ -591,13 +591,13 @@ class LLWinClientAzureSetup:
             console.print(f"  {idx:2d}. [cyan]{instance['type']:25s}[/cyan] - {instance['vcpu']:2d} vCPUs, {instance['memory_gb']:3d} GB RAM, {gpu_desc}")
 
         # Mark recommended instances
-        recommended = ['Standard_NC16as_T4_v3', 'Standard_NC8as_T4_v3', 'Standard_NV12ads_A10_v5']
+        recommended = ['Standard_NC8as_T4_v3', 'Standard_NC16as_T4_v3', 'Standard_NV12ads_A10_v5']
         rec_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended]
         if rec_indices:
             console.print(f"\n[dim]Recommended for media/creative workflows: {', '.join(str(i) for i in rec_indices)}[/dim]")
 
         # Get existing VM type index or default to NC16as_T4_v3
-        existing_type = existing_config.get('vm_size', 'Standard_NC16as_T4_v3')
+        existing_type = existing_config.get('vm_size', 'Standard_NC8as_T4_v3')
         default_choice = next((idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] == existing_type), 3)
 
         # Build choices list
@@ -742,7 +742,7 @@ class LLWinClientAzureSetup:
 
         # Show estimated costs
         instance_count = display_config.get('instance_count', 1)
-        vm_size = display_config.get('vm_size', 'Standard_NC16as_T4_v3')
+        vm_size = display_config.get('vm_size', 'Standard_NC8as_T4_v3')
 
         resources_text = f"[yellow]Estimated Resources:[/yellow]\n"
         resources_text += f"• {instance_count} × {vm_size} Virtual Machines\n"
@@ -767,7 +767,7 @@ location           = "{config.get('location', 'eastus')}"
 resource_group_name = "{config.get('resource_group_name', 'll-win-client-rg')}"
 
 # VM Configuration
-vm_size            = "{config.get('vm_size', 'Standard_NC16as_T4_v3')}"
+vm_size            = "{config.get('vm_size', 'Standard_NC8as_T4_v3')}"
 instance_count     = {config.get('instance_count', 1)}
 
 # Disk Configuration
