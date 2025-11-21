@@ -1,0 +1,27 @@
+# LucidLink Windows Client Deployment Variables - Azure
+# Copy this file to terraform.tfvars and fill in your values
+
+# Azure Configuration
+location           = "eastus"
+resource_group_name = "ll-win-client-rg"
+
+# VM Configuration
+vm_size            = "Standard_NC16as_T4_v3"
+instance_count     = 1
+
+# Disk Configuration
+os_disk_size_gb    = 256
+data_disk_size_gb  = 2048
+
+# Admin Credentials
+admin_username     = "azureuser"
+admin_password     = "YourSecurePassword123!"
+
+# LucidLink Configuration
+filespace_domain   = "your-filespace.domain"
+filespace_user     = "your-email@example.com"
+filespace_password = "your-filespace-password"
+mount_point        = "L:"
+
+# LucidLink installer URL (Windows MSI)
+lucidlink_installer_url = "https://www.lucidlink.com/download/new-ll-latest/win/stable/"
