@@ -152,6 +152,7 @@ resource "azurerm_virtual_machine_extension" "lucidlink_install" {
   })
 
   tags       = local.common_tags
+  depends_on = [azurerm_virtual_machine_data_disk_attachment.data]
 }
 
 # NVIDIA GPU Driver Extension
