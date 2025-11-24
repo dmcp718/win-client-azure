@@ -110,7 +110,7 @@ resource "azurerm_windows_virtual_machine" "main" {
   size                = var.vm_size
   admin_username      = var.admin_username
   admin_password      = var.admin_password
-  zone                = "1"  # Required for Premium SSD v2 data disk
+  # zone removed - northcentralus doesn't support availability zones
 
   network_interface_ids = [
     azurerm_network_interface.main[count.index].id,
@@ -168,20 +168,18 @@ resource "azurerm_virtual_machine_extension" "nvidia_gpu" {
   depends_on = [azurerm_virtual_machine_extension.lucidlink_install]
 }
 
-# Managed Data Disk for Media/Projects (Premium SSD v2)
+# Managed Data Disk for Media/Projects (Premium SSD)
 resource "azurerm_managed_disk" "data" {
   count                = var.instance_count
   name                 = "ll-win-${count.index + 1}-datadisk"
   location             = azurerm_resource_group.main.location
   resource_group_name  = azurerm_resource_group.main.name
-  storage_account_type = "PremiumV2_LRS"
+  storage_account_type = "Premium_LRS"  # Changed from PremiumV2_LRS - northcentralus doesn't support zones
   create_option        = "Empty"
   disk_size_gb         = var.data_disk_size_gb
-  zone                 = "1"  # Required for Premium SSD v2
+  # zone removed - northcentralus doesn't support availability zones
 
-  # Premium SSD v2 custom performance settings
-  disk_iops_read_write = var.data_disk_iops
-  disk_mbps_read_write = var.data_disk_throughput_mbps
+  # Premium SSD v1 - no custom IOPS/throughput settings
 
   tags = merge(local.common_tags, {
     Purpose = "Media and Project Storage"
@@ -194,5 +192,5 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data" {
   managed_disk_id    = azurerm_managed_disk.data[count.index].id
   virtual_machine_id = azurerm_windows_virtual_machine.main[count.index].id
   lun                = 0
-  caching            = "None"  # Premium SSD v2 does not support caching
+  caching            = "ReadOnly"  # Premium SSD v1 supports caching
 }
