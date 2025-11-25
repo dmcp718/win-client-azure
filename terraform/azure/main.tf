@@ -67,10 +67,11 @@ resource "azurerm_public_ip" "main" {
 
 # Network Interfaces
 resource "azurerm_network_interface" "main" {
-  count               = var.instance_count
-  name                = "ll-win-client-nic-${count.index + 1}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  count                         = var.instance_count
+  name                          = "ll-win-client-nic-${count.index + 1}"
+  location                      = azurerm_resource_group.main.location
+  resource_group_name           = azurerm_resource_group.main.name
+  accelerated_networking_enabled = true  # Enable for up to 30 Gbps throughput
 
   ip_configuration {
     name                          = "internal"
