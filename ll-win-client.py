@@ -356,8 +356,26 @@ class LLWinClientAzureSetup:
             return self._get_fallback_gpu_instances()
 
     def _get_fallback_gpu_instances(self) -> List[Dict]:
-        """Fallback list of Azure GPU VM sizes"""
+        """Fallback list of Azure VM sizes (GPU and non-GPU)"""
         return [
+            {
+                'type': 'Standard_F16s_v2',
+                'vcpu': 16,
+                'memory_gb': 32,
+                'gpu_count': 0,
+                'gpu_manufacturer': None,
+                'gpu_name': 'None - Compute Optimized',
+                'gpu_memory_gb': 0
+            },
+            {
+                'type': 'Standard_L8s_v3',
+                'vcpu': 8,
+                'memory_gb': 64,
+                'gpu_count': 0,
+                'gpu_manufacturer': None,
+                'gpu_name': 'None - Storage Optimized',
+                'gpu_memory_gb': 0
+            },
             {
                 'type': 'Standard_NC4as_T4_v3',
                 'vcpu': 4,
@@ -566,8 +584,8 @@ class LLWinClientAzureSetup:
             console.print(f"[{self.colors['error']}]No GPU VM sizes available.[/]")
             return None
 
-        # Display available GPU VMs organized by family
-        console.print("\n[bold]Available GPU VM Sizes:[/bold]")
+        # Display available VMs organized by family
+        console.print("\n[bold]Available VM Sizes:[/bold]")
 
         # Group by instance family (NC-series vs NV-series)
         families = {}
@@ -584,17 +602,27 @@ class LLWinClientAzureSetup:
 
         # Display with grouping
         for idx, instance in enumerate(gpu_instance_types, 1):
-            gpu_desc = f"{instance['gpu_count']}x {instance['gpu_manufacturer']} {instance['gpu_name']}"
-            if instance.get('gpu_memory_gb'):
-                gpu_desc += f" ({instance['gpu_memory_gb']} GB VRAM)"
+            # Handle both GPU and non-GPU VMs
+            if instance['gpu_count'] > 0:
+                gpu_desc = f"{instance['gpu_count']}x {instance['gpu_manufacturer']} {instance['gpu_name']}"
+                if instance.get('gpu_memory_gb'):
+                    gpu_desc += f" ({instance['gpu_memory_gb']} GB VRAM)"
+            else:
+                gpu_desc = instance['gpu_name']  # Shows "None - Compute Optimized" etc.
 
             console.print(f"  {idx:2d}. [cyan]{instance['type']:25s}[/cyan] - {instance['vcpu']:2d} vCPUs, {instance['memory_gb']:3d} GB RAM, {gpu_desc}")
 
         # Mark recommended instances
-        recommended = ['Standard_NV6ads_A10_v5', 'Standard_NV12ads_A10_v5', 'Standard_NV18ads_A10_v5']
-        rec_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended]
-        if rec_indices:
-            console.print(f"\n[dim]Recommended for media/creative workflows: {', '.join(str(i) for i in rec_indices)}[/dim]")
+        recommended_gpu = ['Standard_NV6ads_A10_v5', 'Standard_NV12ads_A10_v5', 'Standard_NV18ads_A10_v5']
+        recommended_lucidlink = ['Standard_F16s_v2', 'Standard_L8s_v3']
+
+        rec_gpu_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended_gpu]
+        rec_ll_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended_lucidlink]
+
+        if rec_gpu_indices:
+            console.print(f"\n[dim]Recommended for GPU workflows: {', '.join(str(i) for i in rec_gpu_indices)}[/dim]")
+        if rec_ll_indices:
+            console.print(f"[dim]Recommended for LucidLink testing: {', '.join(str(i) for i in rec_ll_indices)}[/dim]")
 
         # Get existing VM type index or default to NV6ads_A10_v5 (graphics-enabled)
         existing_type = existing_config.get('vm_size', 'Standard_NV6ads_A10_v5')
