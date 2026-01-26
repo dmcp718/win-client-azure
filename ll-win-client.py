@@ -84,6 +84,19 @@ class LLWinClientAzureSetup:
             'info': '#6b7280',
         }
 
+        # Valid Azure US locations
+        self.azure_us_locations = [
+            ('eastus', 'East US', 'Virginia'),
+            ('eastus2', 'East US 2', 'Virginia'),
+            ('centralus', 'Central US', 'Iowa'),
+            ('northcentralus', 'North Central US', 'Illinois'),
+            ('southcentralus', 'South Central US', 'Texas'),
+            ('westcentralus', 'West Central US', 'Wyoming'),
+            ('westus', 'West US', 'California'),
+            ('westus2', 'West US 2', 'Washington'),
+            ('westus3', 'West US 3', 'Arizona'),
+        ]
+
     # ========== Configuration Management ==========
 
     def load_config(self) -> Dict:
@@ -517,11 +530,51 @@ class LLWinClientAzureSetup:
 
         # Step 1: Azure Location
         console.print("[bold cyan]Step 1: Azure Location[/bold cyan]")
-        console.print("[dim]Common locations: eastus, eastus2, westus2, centralus, westeurope[/dim]")
-        config['location'] = Prompt.ask(
-            "Azure Location",
-            default=existing_config.get('location', 'eastus')
+
+        # Display table of valid US locations
+        location_table = Table(title="Available Azure US Locations", box=box.ROUNDED)
+        location_table.add_column("#", style="cyan", justify="right", width=3)
+        location_table.add_column("Location ID", style="green")
+        location_table.add_column("Display Name", style="white")
+        location_table.add_column("Region", style="dim")
+
+        for idx, (loc_id, display_name, region) in enumerate(self.azure_us_locations, 1):
+            location_table.add_row(str(idx), loc_id, display_name, region)
+
+        console.print(location_table)
+        console.print()
+
+        # Get default location index
+        default_location = existing_config.get('location', 'eastus')
+        default_idx = '1'
+        for idx, (loc_id, _, _) in enumerate(self.azure_us_locations, 1):
+            if loc_id == default_location:
+                default_idx = str(idx)
+                break
+
+        location_choice = Prompt.ask(
+            "Select location (enter number or location ID)",
+            default=default_idx
         )
+
+        # Parse selection - could be number or location ID
+        if location_choice.isdigit():
+            idx = int(location_choice)
+            if 1 <= idx <= len(self.azure_us_locations):
+                config['location'] = self.azure_us_locations[idx - 1][0]
+            else:
+                console.print(f"[{self.colors['warning']}]Invalid selection, using default: eastus[/]")
+                config['location'] = 'eastus'
+        else:
+            # Check if it's a valid location ID
+            valid_ids = [loc[0] for loc in self.azure_us_locations]
+            if location_choice.lower() in valid_ids:
+                config['location'] = location_choice.lower()
+            else:
+                console.print(f"[{self.colors['warning']}]Unknown location '{location_choice}', using as-is[/]")
+                config['location'] = location_choice
+
+        console.print(f"[{self.colors['success']}]✓ Selected location: {config['location']}[/]")
         console.print()
 
         # Step 2: Azure Credentials
