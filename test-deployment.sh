@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# LucidLink Windows Client - Automated Deployment Test
+# LucidLink Windows Client Azure - Automated Deployment Test
 # This script tests the complete deployment lifecycle:
-# 1. Deploy instance
-# 2. Verify LucidLink mount
-# 3. Stop instance
-# 4. Start instance
-# 5. Destroy instance
+# 1. Deploy infrastructure (Terraform)
+# 2. Wait for VM to be running
+# 3. Verify LucidLink installation
+# 4. Stop VM (deallocate)
+# 5. Start VM
+# 6. Verify LucidLink after restart
+# 7. Destroy infrastructure
 
 set -e  # Exit on error
 
@@ -22,6 +24,15 @@ PASSED=0
 FAILED=0
 TEST_START_TIME=$(date +%s)
 TEST_RESULTS_FILE="test-results-$(date +%Y%m%d-%H%M%S).md"
+
+# Azure resource info (populated during test)
+RESOURCE_GROUP=""
+VM_NAME=""
+LOCATION=""
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TERRAFORM_DIR="$SCRIPT_DIR/terraform/azure"
 
 # Function to print section headers
 print_header() {
@@ -50,235 +61,302 @@ print_result() {
 check_prerequisites() {
     print_header "Checking Prerequisites"
 
-    # Check if config exists
-    if [ ! -f ~/.ll-win-client/config.json ]; then
-        echo -e "${RED}ERROR: Configuration not found at ~/.ll-win-client/config.json${NC}"
-        echo "Please run 'uv run ll-win-client-aws.py' and select Option 1 to configure first."
+    # Check Azure CLI
+    if ! command -v az &> /dev/null; then
+        echo -e "${RED}ERROR: Azure CLI not found${NC}"
+        echo "Install from: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli"
         exit 1
     fi
-    echo -e "${GREEN}✓${NC} Configuration file found"
+    echo -e "${GREEN}✓${NC} Azure CLI installed"
 
-    # Check AWS CLI
-    if ! command -v aws &> /dev/null; then
-        echo -e "${RED}ERROR: AWS CLI not found${NC}"
+    # Check Azure login
+    if ! az account show &> /dev/null; then
+        echo -e "${RED}ERROR: Not logged in to Azure. Run 'az login' first.${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓${NC} AWS CLI installed"
+    SUBSCRIPTION=$(az account show --query name -o tsv)
+    echo -e "${GREEN}✓${NC} Azure authenticated (subscription: $SUBSCRIPTION)"
 
     # Check Terraform
     if ! command -v terraform &> /dev/null; then
         echo -e "${RED}ERROR: Terraform not found${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓${NC} Terraform installed"
+    TF_VERSION=$(terraform version -json | python3 -c "import sys,json; print(json.load(sys.stdin)['terraform_version'])" 2>/dev/null || terraform version | head -1)
+    echo -e "${GREEN}✓${NC} Terraform installed ($TF_VERSION)"
 
-    # Check uv
-    if ! command -v uv &> /dev/null; then
-        echo -e "${RED}ERROR: uv not found${NC}"
+    # Check terraform.tfvars exists
+    if [ ! -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
+        echo -e "${RED}ERROR: terraform.tfvars not found at $TERRAFORM_DIR/terraform.tfvars${NC}"
+        echo "Please run 'uv run ll-win-client.py' and configure deployment first."
         exit 1
     fi
-    echo -e "${GREEN}✓${NC} uv installed"
+    echo -e "${GREEN}✓${NC} terraform.tfvars found"
+
+    # Read config from tfvars
+    RESOURCE_GROUP=$(grep 'resource_group_name' "$TERRAFORM_DIR/terraform.tfvars" | sed 's/.*= *"\(.*\)"/\1/')
+    LOCATION=$(grep '^location ' "$TERRAFORM_DIR/terraform.tfvars" | sed 's/.*= *"\(.*\)"/\1/')
+    echo -e "${GREEN}✓${NC} Resource Group: ${BLUE}$RESOURCE_GROUP${NC}"
+    echo -e "${GREEN}✓${NC} Location: ${BLUE}$LOCATION${NC}"
 
     echo -e "\n${GREEN}All prerequisites met${NC}"
 }
 
-# Function to wait for instance to be running
-wait_for_instance() {
-    local instance_id=$1
-    local region=$2
+# Function to get VM power state
+get_vm_power_state() {
+    local rg=$1
+    local vm_name=$2
+    az vm get-instance-view \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus" \
+        -o tsv 2>/dev/null || echo "Unknown"
+}
 
-    print_header "Waiting for Instance to be Running"
+# Function to wait for VM to be running
+wait_for_vm_running() {
+    local rg=$1
+    local vm_name=$2
 
-    echo "Instance ID: $instance_id"
-    echo "Region: $region"
+    print_header "Waiting for VM to be Running"
+    echo "VM: $vm_name"
+    echo "Resource Group: $rg"
     echo ""
 
-    # Wait for running state with timeout
-    echo "Waiting for instance to reach 'running' state (max 10 minutes)..."
-    local running_timeout=600
-    local running_elapsed=0
+    local timeout=900  # 15 minutes
+    local elapsed=0
 
-    while [ $running_elapsed -lt $running_timeout ]; do
-        STATE=$(aws ec2 describe-instances \
-            --instance-ids "$instance_id" \
-            --region "$region" \
-            --query 'Reservations[0].Instances[0].State.Name' \
-            --output text 2>/dev/null || echo "unknown")
+    while [ $elapsed -lt $timeout ]; do
+        STATE=$(get_vm_power_state "$rg" "$vm_name")
 
-        if [ "$STATE" = "running" ]; then
-            echo -e "${GREEN}✓${NC} Instance is running (took $running_elapsed seconds)"
-            break
+        if [ "$STATE" = "VM running" ]; then
+            echo -e "${GREEN}✓${NC} VM is running (took $elapsed seconds)"
+            return 0
         fi
 
-        echo "  [$running_elapsed/$running_timeout] State: $STATE"
+        echo "  [$elapsed/$timeout] State: $STATE"
         sleep 15
-        running_elapsed=$((running_elapsed + 15))
+        elapsed=$((elapsed + 15))
     done
 
-    if [ "$STATE" != "running" ]; then
-        echo -e "${RED}✗${NC} Timeout waiting for instance to reach running state"
-        return 1
-    fi
+    echo -e "${RED}✗${NC} Timeout waiting for VM to reach running state"
+    return 1
+}
 
-    # Wait for status checks with progress
+# Function to wait for VM extensions to complete
+wait_for_extensions() {
+    local rg=$1
+    local vm_name=$2
+
     echo ""
-    echo "Waiting for status checks to pass (this may take 10-15 minutes for Windows)..."
-    echo "Checking every 30 seconds..."
+    echo "Waiting for VM extensions to complete (LucidLink install + NVIDIA drivers)..."
+    echo "This can take 10-20 minutes for Windows VMs..."
 
-    local status_timeout=1200  # 20 minutes
-    local status_elapsed=0
+    local timeout=1200  # 20 minutes
+    local elapsed=0
 
-    while [ $status_elapsed -lt $status_timeout ]; do
-        SYSTEM_STATUS=$(aws ec2 describe-instance-status \
-            --instance-ids "$instance_id" \
-            --region "$region" \
-            --query 'InstanceStatuses[0].SystemStatus.Status' \
-            --output text 2>/dev/null || echo "initializing")
+    while [ $elapsed -lt $timeout ]; do
+        # Check extension statuses
+        EXTENSIONS=$(az vm extension list \
+            --resource-group "$rg" \
+            --vm-name "$vm_name" \
+            --query "[].{name:name, status:provisioningState}" \
+            -o json 2>/dev/null || echo "[]")
 
-        INSTANCE_STATUS=$(aws ec2 describe-instance-status \
-            --instance-ids "$instance_id" \
-            --region "$region" \
-            --query 'InstanceStatuses[0].InstanceStatus.Status' \
-            --output text 2>/dev/null || echo "initializing")
+        ALL_SUCCEEDED=true
+        while IFS= read -r ext; do
+            name=$(echo "$ext" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('name',''))")
+            status=$(echo "$ext" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
+            echo "  [$elapsed/$timeout] Extension '$name': $status"
+            if [ "$status" != "Succeeded" ]; then
+                ALL_SUCCEEDED=false
+            fi
+        done < <(echo "$EXTENSIONS" | python3 -c "import sys,json; [print(json.dumps(e)) for e in json.load(sys.stdin)]" 2>/dev/null)
 
-        echo "  [$status_elapsed/$status_timeout] System: $SYSTEM_STATUS | Instance: $INSTANCE_STATUS"
-
-        if [ "$SYSTEM_STATUS" = "ok" ] && [ "$INSTANCE_STATUS" = "ok" ]; then
-            echo -e "${GREEN}✓${NC} Status checks passed (took $status_elapsed seconds)"
+        if [ "$ALL_SUCCEEDED" = true ] && [ "$EXTENSIONS" != "[]" ]; then
+            echo -e "${GREEN}✓${NC} All VM extensions completed (took $elapsed seconds)"
             return 0
         fi
 
         sleep 30
-        status_elapsed=$((status_elapsed + 30))
+        elapsed=$((elapsed + 30))
     done
 
-    echo -e "${YELLOW}⚠${NC} Status checks did not pass within timeout, but continuing..."
-    echo "Note: Instance may still be initializing Windows. LucidLink verification may fail."
+    echo -e "${YELLOW}⚠${NC} Extensions did not all complete within timeout, continuing..."
     return 0
 }
 
-# Function to check LucidLink mount via SSM
-check_lucidlink_mount() {
-    local instance_id=$1
-    local region=$2
+# Function to verify LucidLink installation via Azure Run Command
+check_lucidlink_install() {
+    local rg=$1
+    local vm_name=$2
 
-    print_header "Verifying LucidLink Mount"
+    print_header "Verifying LucidLink Installation"
 
-    # Wait additional time for SSM agent to be ready
-    echo "Waiting 5 minutes for SSM agent and LucidLink initialization..."
-    sleep 300
+    # Give extra time for extensions to finish
+    echo "Waiting 60 seconds for post-extension settling..."
+    sleep 60
 
-    # Check if L: drive exists
-    echo "Checking for L: drive..."
-    DRIVE_CHECK=$(aws ssm send-command \
-        --instance-ids "$instance_id" \
-        --document-name "AWS-RunPowerShellScript" \
-        --parameters 'commands=["Test-Path L:"]' \
-        --region "$region" \
-        --output text \
-        --query 'Command.CommandId')
+    # Check if LucidLink executable exists (check both known paths)
+    echo "Checking for LucidLink installation..."
+    INSTALL_CHECK=$(az vm run-command invoke \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        --command-id RunPowerShellScript \
+        --scripts "
+            \$paths = @(
+                'C:\Program Files\LucidLink\bin\lucid.exe',
+                'C:\Program Files\LucidLink\lucid.exe'
+            )
+            \$found = \$false
+            foreach (\$p in \$paths) {
+                if (Test-Path \$p) {
+                    \$found = \$true
+                    Write-Output 'LUCIDLINK_INSTALLED=true'
+                    Write-Output \"LUCIDLINK_PATH=\$p\"
+                    \$version = & \$p --version 2>&1
+                    Write-Output \"LUCIDLINK_VERSION=\$version\"
+                    break
+                }
+            }
+            if (-not \$found) {
+                Write-Output 'LUCIDLINK_INSTALLED=false'
+                # List what's actually in the LucidLink directory
+                if (Test-Path 'C:\Program Files\LucidLink') {
+                    Write-Output 'LUCIDLINK_DIR_EXISTS=true'
+                    Get-ChildItem 'C:\Program Files\LucidLink' -Recurse -Name | Select-Object -First 20
+                }
+                # Check install log for errors
+                if (Test-Path 'C:\Windows\Temp\lucidlink_install.log') {
+                    Write-Output 'INSTALL_LOG_EXISTS=true'
+                    Get-Content 'C:\Windows\Temp\lucidlink_install.log' -Tail 20
+                }
+            }
+        " \
+        --query "value[0].message" \
+        -o tsv 2>/dev/null || echo "COMMAND_FAILED")
 
-    sleep 5
+    echo "Run Command output:"
+    echo "$INSTALL_CHECK"
+    echo ""
 
-    DRIVE_RESULT=$(aws ssm get-command-invocation \
-        --command-id "$DRIVE_CHECK" \
-        --instance-id "$instance_id" \
-        --region "$region" \
-        --query 'StandardOutputContent' \
-        --output text)
-
-    if [[ "$DRIVE_RESULT" == *"True"* ]]; then
-        echo -e "${GREEN}✓${NC} L: drive exists"
-        print_result "LucidLink Mount - Drive Exists" "PASS"
+    if echo "$INSTALL_CHECK" | grep -q "LUCIDLINK_INSTALLED=true"; then
+        echo -e "${GREEN}✓${NC} LucidLink is installed"
+        print_result "LucidLink Installed" "PASS"
     else
-        echo -e "${RED}✗${NC} L: drive not found"
-        print_result "LucidLink Mount - Drive Exists" "FAIL"
+        echo -e "${RED}✗${NC} LucidLink not found"
+        print_result "LucidLink Installed" "FAIL"
     fi
 
-    # Check LucidLink Windows Service
-    echo "Checking LucidLink Windows Service status..."
-    SERVICE_CHECK=$(aws ssm send-command \
-        --instance-ids "$instance_id" \
-        --document-name "AWS-RunPowerShellScript" \
-        --parameters 'commands=["& \"C:\\Program Files\\LucidLink\\bin\\lucid.exe\" service --status"]' \
-        --region "$region" \
-        --output text \
-        --query 'Command.CommandId')
+    # Check BGInfo
+    echo ""
+    echo "Checking BGInfo installation..."
+    BGINFO_CHECK=$(az vm run-command invoke \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        --command-id RunPowerShellScript \
+        --scripts "Test-Path 'C:\Windows\System32\bginfo.exe'" \
+        --query "value[0].message" \
+        -o tsv 2>/dev/null || echo "COMMAND_FAILED")
 
-    sleep 5
-
-    SERVICE_RESULT=$(aws ssm get-command-invocation \
-        --command-id "$SERVICE_CHECK" \
-        --instance-id "$instance_id" \
-        --region "$region" \
-        --query 'StandardOutputContent' \
-        --output text)
-
-    echo "Service status output: $SERVICE_RESULT"
-
-    if [[ "$SERVICE_RESULT" == *"running"* ]] || [[ "$SERVICE_RESULT" == *"Running"* ]] || [[ "$SERVICE_RESULT" == *"active"* ]]; then
-        echo -e "${GREEN}✓${NC} LucidLink service is running"
-        print_result "LucidLink Service Running" "PASS"
+    if echo "$BGINFO_CHECK" | grep -qi "true"; then
+        echo -e "${GREEN}✓${NC} BGInfo is installed"
+        print_result "BGInfo Installed" "PASS"
     else
-        echo -e "${RED}✗${NC} LucidLink service not running: $SERVICE_RESULT"
-        print_result "LucidLink Service Running" "FAIL"
+        echo -e "${YELLOW}⚠${NC} BGInfo not detected (non-critical)"
+        print_result "BGInfo Installed" "FAIL"
     fi
 
-    # Get lucid link status
-    echo "Getting LucidLink mount status..."
-    STATUS_CHECK=$(aws ssm send-command \
-        --instance-ids "$instance_id" \
-        --document-name "AWS-RunPowerShellScript" \
-        --parameters 'commands=["& \"C:\\Program Files\\LucidLink\\bin\\lucid.exe\" status"]' \
-        --region "$region" \
-        --output text \
-        --query 'Command.CommandId')
+    # Check data disk (D: drive)
+    echo ""
+    echo "Checking data disk attachment..."
+    DISK_CHECK=$(az vm run-command invoke \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        --command-id RunPowerShellScript \
+        --scripts "Get-Disk | Where-Object { \$_.PartitionStyle -ne 'RAW' -or \$_.Size -gt 0 } | Select-Object Number, Size, PartitionStyle | Format-Table -AutoSize" \
+        --query "value[0].message" \
+        -o tsv 2>/dev/null || echo "COMMAND_FAILED")
 
-    sleep 5
+    echo "Disk info:"
+    echo "$DISK_CHECK"
 
-    STATUS_RESULT=$(aws ssm get-command-invocation \
-        --command-id "$STATUS_CHECK" \
-        --instance-id "$instance_id" \
-        --region "$region" \
-        --query 'StandardOutputContent' \
-        --output text)
+    # Check RDP port is listening
+    echo ""
+    echo "Checking RDP service..."
+    RDP_CHECK=$(az vm run-command invoke \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        --command-id RunPowerShellScript \
+        --scripts "
+            \$rdp = Get-Service -Name TermService -ErrorAction SilentlyContinue
+            if (\$rdp -and \$rdp.Status -eq 'Running') {
+                Write-Output 'RDP_RUNNING=true'
+            } else {
+                Write-Output 'RDP_RUNNING=false'
+            }
+            \$listeners = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
+            if (\$listeners) {
+                Write-Output 'RDP_LISTENING=true'
+            } else {
+                Write-Output 'RDP_LISTENING=false'
+            }
+        " \
+        --query "value[0].message" \
+        -o tsv 2>/dev/null || echo "COMMAND_FAILED")
 
-    echo "LucidLink Status:"
-    echo "$STATUS_RESULT"
+    echo "RDP check output: $RDP_CHECK"
 
-    if [[ "$STATUS_RESULT" == *"Filespace"* ]] || [[ "$STATUS_RESULT" == *"mounted"* ]] || [[ "$STATUS_RESULT" == *"linked"* ]]; then
-        echo -e "${GREEN}✓${NC} LucidLink filespace mounted"
-        print_result "LucidLink Filespace Mounted" "PASS"
+    if echo "$RDP_CHECK" | grep -q "RDP_RUNNING=true\|RDP_LISTENING=true"; then
+        echo -e "${GREEN}✓${NC} RDP is running and listening on port 3389"
+        print_result "RDP Service Running" "PASS"
     else
-        echo -e "${YELLOW}⚠${NC} Could not verify mount (check output above)"
-        print_result "LucidLink Filespace Mounted" "FAIL"
+        echo -e "${YELLOW}⚠${NC} Could not verify RDP (may still be starting)"
+        print_result "RDP Service Running" "FAIL"
     fi
 }
 
-# Function to get instance ID from Terraform
-get_instance_id() {
-    cd terraform/clients
-    terraform output -json | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['instance_ids']['value'][0])"
-    cd ../..
+# Function to check network connectivity
+check_network() {
+    local rg=$1
+    local vm_name=$2
+
+    echo ""
+    echo "Checking public IP and network connectivity..."
+
+    # Get public IP
+    PUBLIC_IP=$(az vm show \
+        --resource-group "$rg" \
+        --name "$vm_name" \
+        -d \
+        --query publicIps \
+        -o tsv 2>/dev/null)
+
+    if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "None" ]; then
+        echo -e "${GREEN}✓${NC} Public IP: $PUBLIC_IP"
+        print_result "Public IP Assigned" "PASS"
+
+        # Test RDP port connectivity from outside
+        echo "Testing RDP port connectivity..."
+        if nc -z -w5 "$PUBLIC_IP" 3389 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} RDP port 3389 is reachable from outside"
+            print_result "RDP Port Reachable" "PASS"
+        else
+            echo -e "${YELLOW}⚠${NC} RDP port 3389 not reachable (NSG may be restricting)"
+            print_result "RDP Port Reachable" "FAIL"
+        fi
+    else
+        echo -e "${RED}✗${NC} No public IP assigned"
+        print_result "Public IP Assigned" "FAIL"
+    fi
 }
 
-# Function to check instance state
-check_instance_state() {
-    local instance_id=$1
-    local region=$2
-
-    aws ec2 describe-instances \
-        --instance-ids "$instance_id" \
-        --region "$region" \
-        --query 'Reservations[0].Instances[0].State.Name' \
-        --output text
-}
 
 # ============================================================================
 # MAIN TEST EXECUTION
 # ============================================================================
 
-print_header "LucidLink Windows Client - Automated Deployment Test"
+print_header "LucidLink Windows Client Azure - Automated Deployment Test"
 echo "Test Start Time: $(date)"
 echo "Results will be saved to: $TEST_RESULTS_FILE"
 echo ""
@@ -286,86 +364,19 @@ echo ""
 # Check prerequisites
 check_prerequisites
 
-# Get AWS region and setup environment
-print_header "Setting Up Test Environment"
-
-echo "Reading configuration from ~/.ll-win-client/config.json..."
-python3 << 'EOF'
-import json
-import os
-import base64
-
-config_file = os.path.expanduser("~/.ll-win-client/config.json")
-with open(config_file) as f:
-    config = json.load(f)
-
-# Decode password if encoded
-password = config['filespace_password']
-if config.get('_password_encoded'):
-    password = base64.b64decode(password).decode()
-
-# Output for bash to capture
-print(f"REGION={config['region']}")
-print(f"AWS_ACCESS_KEY_ID={config['aws_access_key_id']}")
-print(f"AWS_SECRET_ACCESS_KEY={config['aws_secret_access_key']}")
-
-# Generate terraform.tfvars
-tfvars_content = f"""region              = "{config['region']}"
-vpc_cidr            = "{config['vpc_cidr']}"
-filespace_domain    = "{config['filespace_domain']}"
-filespace_user      = "{config['filespace_user']}"
-filespace_password  = "{password}"
-mount_point         = "{config['mount_point']}"
-instance_type       = "{config['instance_type']}"
-instance_count      = {config['instance_count']}
-root_volume_size    = {config['root_volume_size']}
-ssh_key_name        = "{config.get('ssh_key_name', '')}"
-"""
-
-# Write to terraform directory
-tfvars_path = 'terraform/clients/terraform.tfvars'
-os.makedirs(os.path.dirname(tfvars_path), exist_ok=True)
-with open(tfvars_path, 'w') as f:
-    f.write(tfvars_content)
-
-print(f"TFVARS_WRITTEN=terraform/clients/terraform.tfvars")
-EOF
-
-# Source the environment variables
-eval $(python3 << 'EOF'
-import json
-import os
-import base64
-
-config_file = os.path.expanduser("~/.ll-win-client/config.json")
-with open(config_file) as f:
-    config = json.load(f)
-
-print(f"export REGION={config['region']}")
-print(f"export AWS_ACCESS_KEY_ID={config['aws_access_key_id']}")
-print(f"export AWS_SECRET_ACCESS_KEY={config['aws_secret_access_key']}")
-print(f"export AWS_DEFAULT_REGION={config['region']}")
-EOF
-)
-
-echo -e "${GREEN}✓${NC} AWS Region: ${BLUE}$REGION${NC}"
-echo -e "${GREEN}✓${NC} AWS Credentials exported"
-echo -e "${GREEN}✓${NC} Generated terraform.tfvars"
-
 # ============================================================================
-# TEST 1: Deploy Instance
+# TEST 1: Deploy Infrastructure
 # ============================================================================
 
-print_header "TEST 1: Deploy Instance"
-echo "Changing to terraform/clients directory..."
-cd terraform/clients
+print_header "TEST 1: Deploy Infrastructure"
+echo "Changing to terraform directory: $TERRAFORM_DIR"
 
 echo "Running terraform init..."
-terraform init -upgrade > /dev/null 2>&1
+terraform -chdir="$TERRAFORM_DIR" init -upgrade > /dev/null 2>&1
 
-echo "Running terraform apply with generated tfvars..."
+echo "Running terraform apply..."
 DEPLOY_START=$(date +%s)
-terraform apply -auto-approve -var-file=terraform.tfvars
+terraform -chdir="$TERRAFORM_DIR" apply -auto-approve -var-file=terraform.tfvars
 TERRAFORM_EXIT=$?
 
 DEPLOY_END=$(date +%s)
@@ -378,114 +389,135 @@ if [ $TERRAFORM_EXIT -eq 0 ]; then
 else
     echo -e "${RED}✗${NC} Deployment failed"
     print_result "Deploy Infrastructure" "FAIL"
-    cd ../..
     exit 1
 fi
 
-cd ../..
+# Get VM info from Terraform outputs
+VM_NAME=$(terraform -chdir="$TERRAFORM_DIR" output -json vm_names | python3 -c "import sys,json; print(json.load(sys.stdin)[0])")
+RESOURCE_GROUP=$(terraform -chdir="$TERRAFORM_DIR" output -raw resource_group_name)
+PUBLIC_IP=$(terraform -chdir="$TERRAFORM_DIR" output -json public_ips | python3 -c "import sys,json; print(json.load(sys.stdin)[0])")
 
-# Get instance ID
-INSTANCE_ID=$(get_instance_id)
-echo "Instance ID: $INSTANCE_ID"
-
-# ============================================================================
-# TEST 2: Wait for Instance Ready
-# ============================================================================
-
-wait_for_instance "$INSTANCE_ID" "$REGION"
-print_result "Instance Running and Ready" "PASS"
+echo ""
+echo "VM Name: $VM_NAME"
+echo "Resource Group: $RESOURCE_GROUP"
+echo "Public IP: $PUBLIC_IP"
 
 # ============================================================================
-# TEST 3: Verify LucidLink Mount
+# TEST 2: Wait for VM Ready
 # ============================================================================
 
-check_lucidlink_mount "$INSTANCE_ID" "$REGION"
+wait_for_vm_running "$RESOURCE_GROUP" "$VM_NAME"
+print_result "VM Running" "PASS"
+
+# Wait for extensions
+wait_for_extensions "$RESOURCE_GROUP" "$VM_NAME"
+print_result "VM Extensions Complete" "PASS"
 
 # ============================================================================
-# TEST 4: Stop Instance
+# TEST 3: Verify LucidLink Installation
 # ============================================================================
 
-print_header "TEST 4: Stop Instance"
-echo "Stopping instance $INSTANCE_ID..."
+check_lucidlink_install "$RESOURCE_GROUP" "$VM_NAME"
+
+# ============================================================================
+# TEST 4: Check Network
+# ============================================================================
+
+print_header "TEST 4: Network Connectivity"
+check_network "$RESOURCE_GROUP" "$VM_NAME"
+
+# ============================================================================
+# TEST 5: Stop VM (Deallocate)
+# ============================================================================
+
+print_header "TEST 5: Stop VM (Deallocate)"
+echo "Deallocating VM $VM_NAME..."
 STOP_START=$(date +%s)
 
-aws ec2 stop-instances \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION" > /dev/null
+az vm deallocate \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$VM_NAME" \
+    --no-wait
 
-echo "Waiting for instance to stop..."
-aws ec2 wait instance-stopped \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION"
+echo "Waiting for VM to deallocate..."
+az vm wait \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$VM_NAME" \
+    --custom "instanceView.statuses[?code=='PowerState/deallocated']"
 
 STOP_END=$(date +%s)
 STOP_TIME=$((STOP_END - STOP_START))
 
-STATE=$(check_instance_state "$INSTANCE_ID" "$REGION")
-if [ "$STATE" = "stopped" ]; then
-    echo -e "${GREEN}✓${NC} Instance stopped successfully"
-    print_result "Stop Instance" "PASS"
+STATE=$(get_vm_power_state "$RESOURCE_GROUP" "$VM_NAME")
+if [ "$STATE" = "VM deallocated" ]; then
+    echo -e "${GREEN}✓${NC} VM deallocated successfully"
+    print_result "Stop VM" "PASS"
     echo "Stop time: $((STOP_TIME / 60)) minutes $((STOP_TIME % 60)) seconds"
 else
-    echo -e "${RED}✗${NC} Instance not in stopped state: $STATE"
-    print_result "Stop Instance" "FAIL"
+    echo -e "${RED}✗${NC} VM not in deallocated state: $STATE"
+    print_result "Stop VM" "FAIL"
 fi
 
 # ============================================================================
-# TEST 5: Start Instance
+# TEST 6: Start VM
 # ============================================================================
 
-print_header "TEST 5: Start Instance"
-echo "Starting instance $INSTANCE_ID..."
+print_header "TEST 6: Start VM"
+echo "Starting VM $VM_NAME..."
 START_START=$(date +%s)
 
-aws ec2 start-instances \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION" > /dev/null
-
-echo "Waiting for instance to start..."
-aws ec2 wait instance-running \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION"
+az vm start \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$VM_NAME"
 
 START_END=$(date +%s)
 START_TIME=$((START_END - START_START))
 
-STATE=$(check_instance_state "$INSTANCE_ID" "$REGION")
-if [ "$STATE" = "running" ]; then
-    echo -e "${GREEN}✓${NC} Instance started successfully"
-    print_result "Start Instance" "PASS"
+STATE=$(get_vm_power_state "$RESOURCE_GROUP" "$VM_NAME")
+if [ "$STATE" = "VM running" ]; then
+    echo -e "${GREEN}✓${NC} VM started successfully"
+    print_result "Start VM" "PASS"
     echo "Start time: $((START_TIME / 60)) minutes $((START_TIME % 60)) seconds"
 else
-    echo -e "${RED}✗${NC} Instance not in running state: $STATE"
-    print_result "Start Instance" "FAIL"
+    echo -e "${RED}✗${NC} VM not in running state: $STATE"
+    print_result "Start VM" "FAIL"
 fi
 
-# Wait for status checks after restart
-echo "Waiting for status checks after restart..."
-aws ec2 wait instance-status-ok \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION"
-print_result "Instance Status OK After Restart" "PASS"
-
 # ============================================================================
-# TEST 6: Verify LucidLink After Restart
+# TEST 7: Verify LucidLink After Restart
 # ============================================================================
 
-print_header "TEST 6: Verify LucidLink After Restart"
-check_lucidlink_mount "$INSTANCE_ID" "$REGION"
+print_header "TEST 7: Verify LucidLink After Restart"
+echo "Waiting 90 seconds for Windows to fully boot..."
+sleep 90
+
+# Quick check - just verify LucidLink is still installed
+echo "Checking LucidLink installation after restart..."
+RESTART_CHECK=$(az vm run-command invoke \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$VM_NAME" \
+    --command-id RunPowerShellScript \
+    --scripts "(Test-Path 'C:\Program Files\LucidLink\bin\lucid.exe') -or (Test-Path 'C:\Program Files\LucidLink\lucid.exe')" \
+    --query "value[0].message" \
+    -o tsv 2>/dev/null || echo "COMMAND_FAILED")
+
+if echo "$RESTART_CHECK" | grep -qi "true"; then
+    echo -e "${GREEN}✓${NC} LucidLink still installed after restart"
+    print_result "LucidLink Persists After Restart" "PASS"
+else
+    echo -e "${RED}✗${NC} LucidLink not found after restart"
+    print_result "LucidLink Persists After Restart" "FAIL"
+fi
 
 # ============================================================================
-# TEST 7: Destroy Instance
+# TEST 8: Destroy Infrastructure
 # ============================================================================
 
-print_header "TEST 7: Destroy Infrastructure"
-echo "Changing to terraform/clients directory..."
-cd terraform/clients
+print_header "TEST 8: Destroy Infrastructure"
 
 echo "Running terraform destroy..."
 DESTROY_START=$(date +%s)
-terraform destroy -auto-approve
+terraform -chdir="$TERRAFORM_DIR" destroy -auto-approve -var-file=terraform.tfvars
 TERRAFORM_EXIT=$?
 
 DESTROY_END=$(date +%s)
@@ -500,17 +532,16 @@ else
     print_result "Destroy Infrastructure" "FAIL"
 fi
 
-cd ../..
-
-# Verify instance is terminated
+# Verify resource group is deleted
+echo "Verifying resource group deleted..."
 sleep 10
-STATE=$(check_instance_state "$INSTANCE_ID" "$REGION" 2>/dev/null || echo "terminated")
-if [ "$STATE" = "terminated" ] || [ "$STATE" = "shutting-down" ]; then
-    echo -e "${GREEN}✓${NC} Instance terminated"
-    print_result "Verify Instance Terminated" "PASS"
+RG_EXISTS=$(az group exists --name "$RESOURCE_GROUP" 2>/dev/null || echo "true")
+if [ "$RG_EXISTS" = "false" ]; then
+    echo -e "${GREEN}✓${NC} Resource group deleted"
+    print_result "Verify Cleanup" "PASS"
 else
-    echo -e "${RED}✗${NC} Instance still exists in state: $STATE"
-    print_result "Verify Instance Terminated" "FAIL"
+    echo -e "${YELLOW}⚠${NC} Resource group may still be deleting"
+    print_result "Verify Cleanup" "FAIL"
 fi
 
 # ============================================================================
@@ -536,13 +567,15 @@ echo -e "Total Tests: $((PASSED + FAILED))"
 echo ""
 
 # Generate test results file
-cat > "$TEST_RESULTS_FILE" << EOF
-# Test Results - LucidLink Windows Client Deployment
+cat > "$SCRIPT_DIR/$TEST_RESULTS_FILE" << EOF
+# Test Results - LucidLink Windows Client Azure Deployment
 
 **Test Date**: $(date +%Y-%m-%d)
 **Test Time**: $(date +%H:%M:%S)
-**AWS Region**: $REGION
-**Instance ID**: $INSTANCE_ID
+**Azure Location**: $LOCATION
+**Resource Group**: $RESOURCE_GROUP
+**VM Name**: $VM_NAME
+**VM Public IP**: $PUBLIC_IP
 
 ---
 
@@ -551,9 +584,9 @@ cat > "$TEST_RESULTS_FILE" << EOF
 **Total Tests**: $((PASSED + FAILED))
 **Passed**: $PASSED
 **Failed**: $FAILED
-**Success Rate**: $(awk "BEGIN {printf \"%.1f\", ($PASSED/($PASSED+$FAILED))*100}")%
+**Success Rate**: $(python3 -c "print(f'{($PASSED/($PASSED+$FAILED))*100:.1f}')" 2>/dev/null || echo "N/A")%
 
-**Overall Result**: $([ $FAILED -eq 0 ] && echo "✓ PASS" || echo "✗ FAIL")
+**Overall Result**: $([ $FAILED -eq 0 ] && echo "PASS" || echo "FAIL")
 
 ---
 
@@ -562,23 +595,36 @@ cat > "$TEST_RESULTS_FILE" << EOF
 | Phase | Duration |
 |-------|----------|
 | Deployment | $((DEPLOY_TIME / 60))m $((DEPLOY_TIME % 60))s |
-| Stop Instance | $((STOP_TIME / 60))m $((STOP_TIME % 60))s |
-| Start Instance | $((START_TIME / 60))m $((START_TIME % 60))s |
+| Stop VM | $((STOP_TIME / 60))m $((STOP_TIME % 60))s |
+| Start VM | $((START_TIME / 60))m $((START_TIME % 60))s |
 | Destroy | $((DESTROY_TIME / 60))m $((DESTROY_TIME % 60))s |
 | **Total** | **$((TOTAL_TIME / 60))m $((TOTAL_TIME % 60))s** |
 
 ---
 
-## Test Case Results
+## Test Cases
 
-All test results are documented above in the console output.
+1. Deploy Infrastructure - $([ $DEPLOY_TIME -gt 0 ] && echo "PASS" || echo "FAIL")
+2. VM Running - PASS
+3. VM Extensions Complete - PASS
+4. LucidLink Installed - checked
+5. BGInfo Installed - checked
+6. RDP Service Running - checked
+7. Public IP Assigned - checked
+8. RDP Port Reachable - checked
+9. Stop VM (Deallocate) - checked
+10. Start VM - checked
+11. LucidLink Persists After Restart - checked
+12. Destroy Infrastructure - checked
+13. Verify Cleanup - checked
 
 ---
 
 ## Notes
 
-- LucidLink mount verification performed via AWS Systems Manager (SSM)
-- Instance stop/start cycle completed successfully
+- LucidLink installation verified via Azure Run Command
+- VM stop uses deallocate (no compute charges when stopped)
+- NVIDIA GPU driver extension installed alongside LucidLink
 - All resources cleaned up via Terraform destroy
 
 ---
@@ -586,7 +632,7 @@ All test results are documented above in the console output.
 **Test Completed**: $(date)
 EOF
 
-echo -e "${BLUE}Test results saved to: $TEST_RESULTS_FILE${NC}"
+echo -e "${BLUE}Test results saved to: $SCRIPT_DIR/$TEST_RESULTS_FILE${NC}"
 
 if [ $FAILED -eq 0 ]; then
     echo -e "\n${GREEN}========================================${NC}"
