@@ -158,10 +158,13 @@ main() {
         echo -e "  ${YELLOW}Skipping Adobe Creative Cloud download (disabled)${NC}"
     fi
 
-    # Step 10: Download TC Benchmark client (if enabled)
+    # Step 10: Download TC Benchmark client and install uv (if enabled)
     if [ "$INSTALL_TC_BENCHMARK" = "1" ]; then
-        run_azure_cmd "Downloading TC Benchmark client" \
-            "Write-Host 'Downloading TC Benchmark client from Bitbucket...'; New-Item -ItemType Directory -Path 'C:\\Temp' -Force | Out-Null; \$zipPath = 'C:\\Temp\\tc-benchmark.zip'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://bitbucket.org/lucidlink/tc-benchmark/get/master.zip' -OutFile \$zipPath -TimeoutSec 300 -UseBasicParsing; \$fileSize = (Get-Item \$zipPath).Length / 1MB; Write-Host \"Downloaded: \$([math]::Round(\$fileSize, 2)) MB\"; Write-Host 'Extracting...'; \$extractPath = 'C:\\Temp\\tc-benchmark-extract'; if (Test-Path \$extractPath) { Remove-Item -Path \$extractPath -Recurse -Force }; Expand-Archive -Path \$zipPath -DestinationPath \$extractPath -Force; \$repoDir = Get-ChildItem -Path \$extractPath -Directory | Select-Object -First 1; \$clientDir = Join-Path \$repoDir.FullName 'client'; if (Test-Path \$clientDir) { \$destPath = 'C:\\Users\\Public\\Desktop\\tc-benchmark-client'; if (Test-Path \$destPath) { Remove-Item -Path \$destPath -Recurse -Force }; Copy-Item -Path \$clientDir -Destination \$destPath -Recurse; Write-Host \"TC Benchmark client extracted to \$destPath\"; Get-ChildItem \$destPath | ForEach-Object { Write-Host \"  \$(\$_.Name)\" } } else { Write-Host 'WARNING: client/ directory not found in archive'; Write-Host 'Available directories:'; Get-ChildItem \$repoDir.FullName -Directory | ForEach-Object { Write-Host \"  \$(\$_.Name)\" } }; Remove-Item -Path \$zipPath -Force -ErrorAction SilentlyContinue; Remove-Item -Path \$extractPath -Recurse -Force -ErrorAction SilentlyContinue; Write-Host 'NOTE: TC Benchmark requires Docker Desktop to run'"
+        run_azure_cmd "Installing uv (Python package manager)" \
+            "Write-Host 'Installing uv...'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod -Uri 'https://astral.sh/uv/install.ps1' | Invoke-Expression; \$uvPath = \"\$env:USERPROFILE\\.local\\bin\"; \$currentPath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); if (\$currentPath -notlike \"*\$uvPath*\") { [Environment]::SetEnvironmentVariable('Path', \"\$currentPath;\$uvPath\", 'Machine'); Write-Host \"Added \$uvPath to system PATH\" }; Write-Host 'uv installed successfully'"
+
+        run_azure_cmd "Downloading TC Benchmark and tframetest" \
+            "Write-Host 'Downloading tc-benchmark from Bitbucket...'; New-Item -ItemType Directory -Path 'C:\\Temp' -Force | Out-Null; \$zipPath = 'C:\\Temp\\tc-benchmark.zip'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://bitbucket.org/lucidlink/tc-benchmark/get/master.zip' -OutFile \$zipPath -TimeoutSec 300 -UseBasicParsing; \$fileSize = (Get-Item \$zipPath).Length / 1MB; Write-Host \"Downloaded: \$([math]::Round(\$fileSize, 2)) MB\"; Write-Host 'Extracting...'; \$extractPath = 'C:\\Temp\\tc-benchmark-extract'; if (Test-Path \$extractPath) { Remove-Item -Path \$extractPath -Recurse -Force }; Expand-Archive -Path \$zipPath -DestinationPath \$extractPath -Force; \$repoDir = Get-ChildItem -Path \$extractPath -Directory | Select-Object -First 1; \$destPath = 'C:\\Users\\Public\\Desktop\\tc-benchmark'; if (Test-Path \$destPath) { Remove-Item -Path \$destPath -Recurse -Force }; New-Item -ItemType Directory -Path \$destPath -Force | Out-Null; Copy-Item -Path (Join-Path \$repoDir.FullName 'tfbench.py') -Destination \$destPath; Copy-Item -Path (Join-Path \$repoDir.FullName 'pyproject.toml') -Destination \$destPath; if (Test-Path (Join-Path \$repoDir.FullName 'README.md')) { Copy-Item -Path (Join-Path \$repoDir.FullName 'README.md') -Destination \$destPath }; \$tframetestZip = Get-ChildItem -Path \$repoDir.FullName -Filter 'tframetest-*-win64.zip' | Select-Object -First 1; if (\$tframetestZip) { Write-Host \"Extracting tframetest from \$(\$tframetestZip.Name)...\"; Expand-Archive -Path \$tframetestZip.FullName -DestinationPath \$destPath -Force; Write-Host 'tframetest.exe extracted' } else { Write-Host 'WARNING: tframetest Windows binary not found in archive' }; Write-Host \"TC Benchmark installed to \$destPath\"; Get-ChildItem \$destPath | ForEach-Object { Write-Host \"  \$(\$_.Name)\" }; Remove-Item -Path \$zipPath -Force -ErrorAction SilentlyContinue; Remove-Item -Path \$extractPath -Recurse -Force -ErrorAction SilentlyContinue"
     else
         echo -e "  ${YELLOW}Skipping TC Benchmark download (disabled)${NC}"
     fi
@@ -177,6 +180,45 @@ main() {
     # Step 12: Enable Windows dark mode
     run_azure_cmd "Enabling Windows dark mode" \
         "\$themePath = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'; if (-not (Test-Path \$themePath)) { New-Item -Path \$themePath -Force | Out-Null }; Set-ItemProperty -Path \$themePath -Name 'AppsUseLightTheme' -Value 0 -Type DWord; Set-ItemProperty -Path \$themePath -Name 'SystemUsesLightTheme' -Value 0 -Type DWord; Write-Host 'Dark mode enabled'"
+
+    # Step 13: Reboot VM to activate NVIDIA GPU drivers
+    # The NVIDIA GPU Driver Extension (installed by Terraform) requires a reboot
+    # to load the driver. We reboot after all software is installed, then wait
+    # for the VM to come back up.
+    echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} Rebooting VM to activate NVIDIA GPU drivers..."
+    az vm restart \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$VM_NAME" \
+        --no-wait 2>/dev/null
+
+    echo -e "  ${YELLOW}Waiting for VM to restart...${NC}"
+    sleep 30
+
+    # Wait for VM to be running again (up to 5 minutes)
+    local retries=0
+    local max_retries=10
+    while [ $retries -lt $max_retries ]; do
+        local vm_state
+        vm_state=$(az vm get-instance-view \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$VM_NAME" \
+            --query "instanceView.statuses[?code=='PowerState/running'] | [0].code" \
+            --output tsv 2>/dev/null)
+        if [ "$vm_state" = "PowerState/running" ]; then
+            break
+        fi
+        retries=$((retries + 1))
+        sleep 30
+    done
+
+    if [ $retries -ge $max_retries ]; then
+        echo -e "  ${YELLOW}⚠ VM may still be restarting — check Azure portal${NC}"
+    else
+        echo -e "  ${GREEN}✓ VM restarted successfully${NC}"
+        # Verify NVIDIA driver is loaded
+        run_azure_cmd "Verifying NVIDIA GPU driver" \
+            "if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { nvidia-smi --query-gpu=name,driver_version --format=csv,noheader } else { Write-Host 'nvidia-smi not found — driver may still be installing' }"
+    fi
 
     # Get public IP
     PUBLIC_IP=$(az vm show \
@@ -196,6 +238,7 @@ main() {
     echo "=================================================="
     echo
     echo "Installed Software:"
+    echo "  ✓ NVIDIA GPU drivers (activated after reboot)"
     echo "  ✓ D: drive (data disk)"
     echo "  ✓ Google Chrome"
     echo "  ✓ LucidLink"
@@ -204,13 +247,14 @@ main() {
     [ "$INSTALL_7ZIP" = "1" ] && echo "  ✓ 7-Zip"
     [ "$INSTALL_NOTEPAD_PP" = "1" ] && echo "  ✓ Notepad++"
     [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  📦 Adobe Creative Cloud installer (on Desktop - requires manual install)"
-    [ "$INSTALL_TC_BENCHMARK" = "1" ] && echo "  📦 TC Benchmark client (on Desktop - requires Docker Desktop)"
+    [ "$INSTALL_TC_BENCHMARK" = "1" ] && echo "  ✓ uv (Python package manager)"
+    [ "$INSTALL_TC_BENCHMARK" = "1" ] && echo "  ✓ TC Benchmark + tframetest (on Desktop)"
     echo
     echo "Next steps:"
     echo "  1. Connect via RDP client"
     echo "  2. Configure LucidLink filespace connection"
     [ "$INSTALL_ADOBE_CC" = "1" ] && echo "  3. Double-click Adobe_Creative_Cloud_Installer.exe on Desktop to install"
-    [ "$INSTALL_TC_BENCHMARK" = "1" ] && echo "  3. Open tc-benchmark-client folder on Desktop and follow setup instructions"
+    [ "$INSTALL_TC_BENCHMARK" = "1" ] && echo "  3. Open tc-benchmark folder on Desktop and run: uv run tfbench.py -h"
 }
 
 # Run main function
