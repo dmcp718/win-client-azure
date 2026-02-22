@@ -85,3 +85,9 @@ variable "data_disk_throughput_mbps" {
   type        = number
   default     = 500
 }
+
+variable "custom_image_id" {
+  description = "Custom managed image ID from Packer build (overrides source_image_reference when set)"
+  type        = string
+  default     = ""
+}

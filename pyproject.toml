@@ -1,14 +1,13 @@
 [project]
-name = "ll-win-client-aws"
+name = "ll-win-client-azure"
 version = "0.1.0"
-description = "LucidLink Windows Client AWS Setup - Deploy Windows LucidLink clients to AWS"
+description = "LucidLink Windows Client Azure Setup - Deploy Windows LucidLink clients to Azure"
 requires-python = ">=3.8"
 dependencies = [
     "rich>=13.7.0",
     "pyyaml>=6.0",
-    "boto3>=1.26.0",
     "cryptography>=41.0.0",
 ]
 
 [project.scripts]
-ll-win-client-aws = "ll-win-client-aws:main"
+ll-win-client-azure = "ll-win-client:main"

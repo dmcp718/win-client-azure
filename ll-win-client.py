@@ -496,6 +496,18 @@ class LLWinClientAzureSetup:
             except:
                 console.print(f"  [{self.colors['success']}]✓ Terraform installed[/]")
 
+        # Check 3: Packer (optional, informational only)
+        console.print("\n3. Checking Packer installation (optional)...")
+        if shutil.which('packer'):
+            try:
+                result = subprocess.run(['packer', 'version'], capture_output=True, text=True)
+                version_line = result.stdout.strip().split('\n')[0] if result.stdout else "Unknown"
+                console.print(f"  [{self.colors['success']}]✓ {version_line}[/]")
+            except:
+                console.print(f"  [{self.colors['success']}]✓ Packer installed[/]")
+        else:
+            console.print(f"  [{self.colors['info']}]ℹ Packer not installed (optional, needed for custom image builds)[/]")
+
         console.print()
         return checks_passed
 
@@ -728,10 +740,23 @@ class LLWinClientAzureSetup:
             "Admin Username",
             default=existing_config.get('admin_username', 'azureuser')
         )
-        config['admin_password'] = Prompt.ask(
-            "Admin Password (for RDP access)",
-            password=True
-        )
+
+        generate_password = Confirm.ask("Auto-generate secure password?", default=True)
+        if generate_password:
+            config['admin_password'] = self.generate_secure_password(16)
+            console.print(f"  [{self.colors['success']}]Generated: {config['admin_password']}[/]")
+        else:
+            config['admin_password'] = Prompt.ask("Admin Password (for RDP access)", password=True)
+        console.print()
+
+        # Step 7: Optional Software
+        console.print("[bold cyan]Step 7: Optional Software[/bold cyan]")
+        console.print("[dim]Select which software to install on VMs after deployment[/dim]")
+        config['install_vlc'] = Confirm.ask("  VLC Media Player", default=existing_config.get('install_vlc', True))
+        config['install_vcredist'] = Confirm.ask("  Visual C++ Redistributables", default=existing_config.get('install_vcredist', False))
+        config['install_7zip'] = Confirm.ask("  7-Zip", default=existing_config.get('install_7zip', False))
+        config['install_notepad_pp'] = Confirm.ask("  Notepad++", default=existing_config.get('install_notepad_pp', False))
+        config['install_adobe_cc'] = Confirm.ask("  Adobe Creative Cloud installer", default=existing_config.get('install_adobe_cc', False))
         console.print()
 
         # Validate configuration
@@ -868,6 +893,15 @@ mount_point        = "{config.get('mount_point', 'L:')}"
 # LucidLink installer URL (Windows MSI)
 lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.lucidlink.com/download/new-ll-latest/win/stable/')}"
 """
+
+        # Add custom_image_id if set
+        custom_image_id = config.get('custom_image_id', '')
+        if custom_image_id:
+            tfvars += f"""
+# Custom Image (Packer-built)
+custom_image_id = "{custom_image_id}"
+"""
+
         return tfvars
 
     def write_terraform_files(self, config: Dict) -> bool:
@@ -933,8 +967,28 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
             console.print(f"[{self.colors['error']}]Terraform init failed: {e}[/]")
             return False, str(e)
 
+    def _cleanup_stale_lock(self, tf_dir: Path):
+        """Remove stale Terraform lock files from dead processes."""
+        lock_file = tf_dir / '.terraform.tfstate.lock.info'
+        if not lock_file.exists():
+            return
+        try:
+            # Check if any terraform process has the state file open
+            state_file = tf_dir / 'terraform.tfstate'
+            result = subprocess.run(
+                ['lsof', str(state_file)],
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:  # No process has the file open
+                lock_file.unlink()
+                console.print(f"[{self.colors['warning']}]Removed stale Terraform lock file[/]")
+        except Exception:
+            pass  # If we can't check, let Terraform handle it
+
     def run_terraform_command(self, command: str, auto_approve: bool = False) -> Tuple[bool, str]:
         """Execute a Terraform command with progress tracking"""
+        self._cleanup_stale_lock(self.terraform_dir)
+
         # Ensure terraform is initialized (except for init command itself)
         if command != 'init' and not self.ensure_terraform_initialized():
             return False, "Terraform initialization failed"
@@ -946,8 +1000,10 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
         os.makedirs(tmpdir, exist_ok=True)
         env['TMPDIR'] = tmpdir
 
-        # Check if VM image override file exists
+        # Check for var files
+        tfvars_path = self.terraform_dir / "terraform.tfvars"
         image_override_file = self.terraform_dir / "image-override.tfvars"
+        use_tfvars = tfvars_path.exists()
         use_image_override = image_override_file.exists()
 
         # Build command
@@ -957,16 +1013,22 @@ lucidlink_installer_url = "{config.get('lucidlink_installer_url', 'https://www.l
             cmd = ['terraform', 'validate']
         elif command == 'plan':
             cmd = ['terraform', 'plan']
+            if use_tfvars:
+                cmd.extend(['-var-file=terraform.tfvars'])
             if use_image_override:
                 cmd.extend(['-var-file=image-override.tfvars'])
         elif command == 'apply':
             cmd = ['terraform', 'apply']
+            if use_tfvars:
+                cmd.extend(['-var-file=terraform.tfvars'])
             if use_image_override:
                 cmd.extend(['-var-file=image-override.tfvars'])
             if auto_approve:
                 cmd.append('-auto-approve')
         elif command == 'destroy':
             cmd = ['terraform', 'destroy']
+            if use_tfvars:
+                cmd.extend(['-var-file=terraform.tfvars'])
             if use_image_override:
                 cmd.extend(['-var-file=image-override.tfvars'])
             if auto_approve:
@@ -1177,6 +1239,42 @@ kdcproxyname:s:
         ))
         console.print()
 
+        # Check for custom images
+        custom_image_id = self.config.get('custom_image_id', '')
+        if not custom_image_id:
+            # Check local registry
+            images_file = self.config_dir / "azure-images.json"
+            if images_file.exists():
+                try:
+                    with open(images_file, 'r') as f:
+                        images = json.load(f)
+                    if images:
+                        console.print("[bold]Custom Images Available:[/bold]")
+                        for idx, img in enumerate(images[-3:], 1):  # Show last 3
+                            console.print(f"  {idx}. {img.get('name', 'unknown')} ({img.get('created', 'unknown')[:10]})")
+                        console.print()
+                        if Confirm.ask("Use a custom image?", default=False):
+                            if len(images) == 1:
+                                custom_image_id = images[0]['image_id']
+                            else:
+                                img_choice = Prompt.ask(
+                                    "Select image number",
+                                    default=str(min(len(images), len(images[-3:])))
+                                )
+                                try:
+                                    idx = int(img_choice) - 1
+                                    recent = images[-3:]
+                                    if 0 <= idx < len(recent):
+                                        custom_image_id = recent[idx]['image_id']
+                                except (ValueError, IndexError):
+                                    console.print(f"[{self.colors['warning']}]Invalid selection, using default image[/]")
+                            if custom_image_id:
+                                self.config['custom_image_id'] = custom_image_id
+                                console.print(f"[{self.colors['success']}]✓ Using custom image[/]")
+                        console.print()
+                except Exception:
+                    pass
+
         # Show deployment summary
         console.print("[bold]Deployment Summary:[/bold]")
         console.print(f"  • Location: {self.config.get('location', 'Not configured')}")
@@ -1187,6 +1285,10 @@ kdcproxyname:s:
         console.print(f"  • Data Disk: {self.config.get('data_disk_size_gb', 'Not configured')} GB")
         console.print(f"  • Filespace: {self.config.get('filespace_domain', 'Not configured')}")
         console.print(f"  • Mount Point: {self.config.get('mount_point', 'Not configured')}")
+        if custom_image_id:
+            console.print(f"  • Image: [bold cyan]Custom (Packer-built)[/bold cyan]")
+        else:
+            console.print(f"  • Image: Windows 11 Pro 23H2 (marketplace)")
         console.print()
 
         # Confirm deployment (skip if auto-approve is enabled)
@@ -1242,7 +1344,7 @@ kdcproxyname:s:
         if success:
             console.print()
             console.print(Panel.fit(
-                f"[{self.colors['success']}]Client deployment completed successfully![/]\n"
+                f"[{self.colors['success']}]Terraform apply completed successfully![/]\n"
                 "Windows instances are initializing...",
                 border_style="green"
             ))
@@ -1258,16 +1360,54 @@ kdcproxyname:s:
                 if 'public_ips' in outputs:
                     console.print(f"Public IPs: {', '.join(outputs['public_ips'])}")
 
-                # Note: Software deployment (LucidLink, etc.) is handled by
-                # Terraform Custom Script Extension during VM provisioning.
-                console.print(f"\n[{self.colors['info']}]Software deployment is handled by Terraform Custom Script Extension[/]")
-                console.print(f"[dim]LucidLink and other software will be installed automatically during VM provisioning[/dim]")
+                vm_names = outputs.get('vm_names', [])
+                public_ips = outputs.get('public_ips', [])
+                resource_group = outputs.get('resource_group_name', self.config.get('resource_group_name', 'll-win-client-rg'))
+                admin_username = self.config.get('admin_username', 'azureuser')
+                admin_password = self.config.get('admin_password', '')
+
+                # Step 6: Run deployment script on each VM
+                deploy_script = self.script_dir / "deployment" / "deploy-windows-client-azure.sh"
+                if deploy_script.exists() and vm_names:
+                    console.print(f"\n[bold]Step 6: Deploying software to VMs...[/bold]")
+                    console.print(f"[{self.colors['warning']}]Waiting 60s for Windows initialization...[/]")
+                    time.sleep(60)
+
+                    # Build environment variables for deployment script
+                    deploy_env = os.environ.copy()
+                    deploy_env['ADMIN_PASSWORD'] = admin_password
+                    deploy_env['INSTALL_VLC'] = '1' if self.config.get('install_vlc', True) else '0'
+                    deploy_env['INSTALL_VCREDIST'] = '1' if self.config.get('install_vcredist', False) else '0'
+                    deploy_env['INSTALL_7ZIP'] = '1' if self.config.get('install_7zip', False) else '0'
+                    deploy_env['INSTALL_NOTEPAD_PP'] = '1' if self.config.get('install_notepad_pp', False) else '0'
+                    deploy_env['INSTALL_ADOBE_CC'] = '1' if self.config.get('install_adobe_cc', False) else '0'
+
+                    for vm_name in vm_names:
+                        console.print(f"\n[bold]Deploying software to {vm_name}...[/bold]")
+                        try:
+                            process = subprocess.Popen(
+                                [str(deploy_script), vm_name, resource_group],
+                                env=deploy_env,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                bufsize=1
+                            )
+                            for line in process.stdout:
+                                console.print(line.rstrip())
+                                logger.info(line.rstrip())
+                            process.wait()
+                            if process.returncode == 0:
+                                console.print(f"[{self.colors['success']}]✓ Software deployment completed for {vm_name}[/]")
+                            else:
+                                console.print(f"[{self.colors['error']}]✗ Software deployment failed for {vm_name} (exit code: {process.returncode})[/]")
+                        except Exception as e:
+                            console.print(f"[{self.colors['error']}]✗ Failed to run deployment script for {vm_name}: {e}[/]")
+                else:
+                    console.print(f"\n[{self.colors['info']}]Software deployment handled by Terraform Custom Script Extension[/]")
 
                 # Generate connection files for each VM
                 console.print(f"\n[bold]Generating connection files...[/bold]")
-                vm_names = outputs.get('vm_names', [])
-                public_ips = outputs.get('public_ips', [])
-                admin_username = self.config.get('admin_username', 'azureuser')
                 rdp_files = []
 
                 for idx, (vm_name, public_ip) in enumerate(zip(vm_names, public_ips)):
@@ -1976,6 +2116,255 @@ kdcproxyname:s:
         console.print()
         Prompt.ask("Press Enter to continue")
 
+    def build_custom_image(self):
+        """Build a custom managed image using Packer with pre-installed software"""
+        console.clear()
+        self.show_banner()
+
+        console.print(Panel.fit(
+            "[bold]Build Custom Image (Packer)[/bold]\n\n"
+            "Create a pre-configured Azure managed image with all software installed.\n"
+            "This speeds up deployments significantly.",
+            border_style="cyan"
+        ))
+        console.print()
+
+        # Check if Packer is installed
+        try:
+            result = subprocess.run(['packer', 'version'], capture_output=True, text=True)
+            packer_version = result.stdout.strip().split('\n')[0] if result.returncode == 0 else None
+        except FileNotFoundError:
+            packer_version = None
+
+        if not packer_version:
+            console.print(f"[{self.colors['error']}]Packer is not installed![/]")
+            console.print()
+            console.print("[bold]To install Packer:[/bold]")
+            console.print("  macOS:   brew install packer")
+            console.print("  Linux:   See https://developer.hashicorp.com/packer/install")
+            console.print()
+            Prompt.ask("Press Enter to continue")
+            return
+
+        console.print(f"[{self.colors['success']}]✓ Packer found: {packer_version}[/]")
+        console.print()
+
+        # Show base image info
+        console.print("[bold]Base Image:[/bold] Windows 11 Pro 23H2")
+        console.print()
+
+        # Show what will be built
+        console.print("[bold]Software to be pre-installed:[/bold]")
+        console.print("  - Google Chrome")
+        console.print("  - BGInfo")
+        console.print("  - Visual C++ Redistributables (2013, 2015-2022)")
+        console.print("  - VLC Media Player")
+        console.print("  - LucidLink installer (pre-downloaded)")
+        console.print()
+        console.print("[bold]Configured at deployment time:[/bold]")
+        console.print("  - D: drive (data disk)")
+        console.print("  - Admin password")
+        console.print("  - LucidLink filespace connection")
+        console.print()
+
+        # Get location
+        location = self.config.get('location', 'eastus') if self.config else 'eastus'
+        resource_group = self.config.get('resource_group_name', 'll-win-client-rg') if self.config else 'll-win-client-rg'
+        packer_rg = f"{resource_group}-packer"
+
+        console.print(f"[bold]Build Location:[/bold] {location}")
+        console.print(f"[bold]Image Resource Group:[/bold] {packer_rg}")
+        console.print(f"[bold]VM Size:[/bold] Standard_D4s_v3 (build VM, no GPU needed)")
+        console.print()
+
+        console.print(f"[{self.colors['warning']}]Note: Building an image takes 15-30 minutes and incurs Azure VM charges.[/]")
+        console.print()
+
+        if not Confirm.ask("Start Packer build?", default=False):
+            console.print("\n[bold]Build cancelled.[/bold]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        # Setup paths
+        packer_dir = self.script_dir / "packer"
+        if not packer_dir.exists():
+            console.print(f"[{self.colors['error']}]Packer directory not found: {packer_dir}[/]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        # Ensure resource group exists for the image
+        console.print(f"\n[{self.colors['info']}]Ensuring resource group '{packer_rg}' exists...[/]")
+        try:
+            subprocess.run(
+                ['az', 'group', 'create', '--name', packer_rg, '--location', location],
+                capture_output=True, text=True, check=True
+            )
+            console.print(f"[{self.colors['success']}]✓ Resource group ready[/]")
+        except subprocess.CalledProcessError as e:
+            console.print(f"[{self.colors['error']}]Failed to create resource group: {e.stderr}[/]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        env = os.environ.copy()
+        console.print()
+
+        # Step 1: Packer init
+        console.print(f"[{self.colors['primary']}][1/3] Running packer init...[/]")
+        try:
+            result = subprocess.run(
+                ['packer', 'init', '.'],
+                cwd=str(packer_dir),
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                console.print(f"[{self.colors['error']}]Packer init failed:[/]")
+                console.print(result.stderr)
+                Prompt.ask("Press Enter to continue")
+                return
+            console.print(f"[{self.colors['success']}]✓ Packer initialized[/]")
+        except Exception as e:
+            console.print(f"[{self.colors['error']}]Error running packer init: {e}[/]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        # Build packer variables list
+        packer_vars = [
+            '-var', f'location={location}',
+            '-var', f'resource_group_name={packer_rg}',
+        ]
+
+        # Step 2: Packer validate
+        console.print(f"[{self.colors['primary']}][2/3] Running packer validate...[/]")
+        try:
+            result = subprocess.run(
+                ['packer', 'validate'] + packer_vars + ['.'],
+                cwd=str(packer_dir),
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                console.print(f"[{self.colors['error']}]Packer validate failed:[/]")
+                console.print(result.stderr)
+                Prompt.ask("Press Enter to continue")
+                return
+            console.print(f"[{self.colors['success']}]✓ Packer template valid[/]")
+        except Exception as e:
+            console.print(f"[{self.colors['error']}]Error running packer validate: {e}[/]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        # Step 3: Packer build
+        console.print(f"[{self.colors['primary']}][3/3] Running packer build (this takes 15-30 minutes)...[/]")
+        console.print()
+
+        # Remove stale manifest before build
+        manifest_file = packer_dir / "manifest.json"
+        if manifest_file.exists():
+            manifest_file.unlink()
+
+        image_id = None
+        build_failed = False
+        try:
+            process = subprocess.Popen(
+                ['packer', 'build'] + packer_vars + ['-color=false', '.'],
+                cwd=str(packer_dir),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            # Stream output
+            for line in process.stdout:
+                line = line.rstrip()
+                # Look for managed image ID in output
+                if '/images/' in line:
+                    match = re.search(r'/subscriptions/[^"]+/resourceGroups/[^"]+/providers/Microsoft\.Compute/images/[^"\s]+', line)
+                    if match:
+                        image_id = match.group(0)
+
+                # Show important lines
+                if any(x in line.lower() for x in ['error', 'image', 'artifact', 'finished', 'creating', 'waiting', 'provisioning']):
+                    console.print(f"  {line}")
+
+            process.wait()
+
+            if process.returncode != 0:
+                build_failed = True
+
+        except Exception as e:
+            console.print(f"[{self.colors['error']}]Error running packer build: {e}[/]")
+            build_failed = True
+
+        console.print()
+
+        # Read image ID from Packer manifest (most reliable)
+        if manifest_file.exists():
+            try:
+                with open(manifest_file, 'r') as f:
+                    manifest = json.load(f)
+                builds = manifest.get('builds', [])
+                if builds:
+                    artifact_id = builds[-1].get('artifact_id', '')
+                    if artifact_id:
+                        image_id = artifact_id
+            except Exception as e:
+                logger.warning(f"Failed to read Packer manifest: {e}")
+
+        if build_failed and not image_id:
+            console.print(f"[{self.colors['error']}]Packer build failed![/]")
+            Prompt.ask("Press Enter to continue")
+            return
+
+        if image_id:
+            if build_failed:
+                console.print(f"[{self.colors['warning']}]Packer reported errors but image was created.[/]")
+            console.print(f"[{self.colors['success']}]✓ Image built successfully![/]")
+            console.print(f"[bold]Image ID:[/bold] {image_id}")
+
+            # Save to local registry
+            images_file = self.config_dir / "azure-images.json"
+            images = []
+            if images_file.exists():
+                try:
+                    with open(images_file, 'r') as f:
+                        images = json.load(f)
+                except Exception:
+                    pass
+            images.append({
+                'image_id': image_id,
+                'location': location,
+                'resource_group': packer_rg,
+                'name': f"ll-win-client-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                'created': datetime.now().isoformat()
+            })
+            with open(images_file, 'w') as f:
+                json.dump(images, f, indent=2)
+
+            console.print()
+
+            # Ask if user wants to use this image
+            if Confirm.ask("Use this image for future deployments?", default=True):
+                if not self.config:
+                    self.config = {}
+                self.config['custom_image_id'] = image_id
+                self.save_config(self.config)
+                console.print(f"[{self.colors['success']}]✓ Configuration updated to use custom image[/]")
+                console.print()
+                console.print("[bold]Next steps:[/bold]")
+                console.print("1. Deploy new instances - they will use your custom image")
+                console.print("2. Deployments will be faster (software pre-installed)")
+        else:
+            console.print(f"[{self.colors['warning']}]Build completed but image ID not captured.[/]")
+            console.print("Check Azure Portal for the new managed image.")
+
+        console.print()
+        Prompt.ask("Press Enter to continue")
+
     def show_main_menu(self):
         """Display main menu"""
         while True:
@@ -2008,12 +2397,13 @@ kdcproxyname:s:
             console.print("6. Stop All Instances")
             console.print("7. Start All Instances")
             console.print("8. Destroy Client Instances")
-            console.print("9. Exit")
+            console.print("B. Build Custom Image (Packer)")
+            console.print("0. Exit")
             console.print()
 
             choice = Prompt.ask(
                 "Select an option",
-                choices=['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+                choices=['1', '2', '3', '4', '5', '6', '7', '8', 'b', 'B', '0'],
                 default='1'
             )
 
@@ -2033,7 +2423,9 @@ kdcproxyname:s:
                 self.start_all_instances()
             elif choice == '8':
                 self.destroy_infrastructure()
-            elif choice == '9':
+            elif choice.upper() == 'B':
+                self.build_custom_image()
+            elif choice == '0':
                 console.print("\n[bold cyan]Goodbye![/bold cyan]")
                 sys.exit(0)
 

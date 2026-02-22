@@ -129,11 +129,17 @@ resource "azurerm_windows_virtual_machine" "main" {
     disk_size_gb         = var.os_disk_size_gb
   }
 
-  source_image_reference {
-    publisher = "MicrosoftWindowsDesktop"
-    offer     = "windows-11"
-    sku       = "win11-23h2-pro"
-    version   = "latest"
+  # Use custom Packer image if specified, otherwise use marketplace image
+  source_image_id = var.custom_image_id != "" ? var.custom_image_id : null
+
+  dynamic "source_image_reference" {
+    for_each = var.custom_image_id == "" ? [1] : []
+    content {
+      publisher = "MicrosoftWindowsDesktop"
+      offer     = "windows-11"
+      sku       = "win11-23h2-pro"
+      version   = "latest"
+    }
   }
 
   tags = local.common_tags
