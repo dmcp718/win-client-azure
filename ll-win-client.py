@@ -211,11 +211,12 @@ class LLWinClientAzureSetup:
             if len(password) < 8:
                 errors.append("Admin password must be at least 8 characters")
 
-        # Validate credentials exist
-        if not config.get('filespace_user'):
-            errors.append("Filespace username is required")
-        if not config.get('filespace_password'):
-            errors.append("Filespace password is required")
+        # Validate credentials exist (only when auto-configure is enabled)
+        if config.get('auto_configure_lucidlink') == 'yes':
+            if not config.get('filespace_user'):
+                errors.append("Filespace username is required")
+            if not config.get('filespace_password'):
+                errors.append("Filespace password is required")
 
         return (len(errors) == 0, errors)
 
@@ -609,33 +610,33 @@ class LLWinClientAzureSetup:
         )
         console.print()
 
-        # Step 4: LucidLink Filespace Configuration
-        console.print("[bold cyan]Step 4: LucidLink Filespace Configuration[/bold cyan]")
-
-        config['filespace_domain'] = Prompt.ask(
-            "Filespace Domain (e.g., filespace.domain)",
-            default=existing_config.get('filespace_domain', 'filespace.domain')
-        )
-        config['filespace_user'] = Prompt.ask(
-            "Filespace Username",
-            default=existing_config.get('filespace_user', '')
-        )
-        config['filespace_password'] = Prompt.ask("Filespace Password", password=True)
-        config['mount_point'] = Prompt.ask(
-            "Mount Point (Windows drive letter or path)",
-            default=existing_config.get('mount_point', 'L:')
-        )
+        # Step 4: LucidLink Configuration
+        console.print("[bold cyan]Step 4: LucidLink Configuration[/bold cyan]")
 
         # Ask if LucidLink should be auto-configured as service
-        auto_config_default = existing_config.get('auto_configure_lucidlink', 'yes')
+        auto_config_default = existing_config.get('auto_configure_lucidlink', 'no')
         auto_configure = Prompt.ask(
-            "Auto-configure LucidLink as Windows service and connect to filespace?",
+            "Install LucidLink as a Windows service and auto-connect to filespace?",
             choices=['yes', 'no'],
             default=auto_config_default
         )
         config['auto_configure_lucidlink'] = auto_configure
 
-        if auto_configure == 'no':
+        if auto_configure == 'yes':
+            config['filespace_domain'] = Prompt.ask(
+                "Filespace Domain (e.g., filespace.domain)",
+                default=existing_config.get('filespace_domain', 'filespace.domain')
+            )
+            config['filespace_user'] = Prompt.ask(
+                "Filespace Username",
+                default=existing_config.get('filespace_user', '')
+            )
+            config['filespace_password'] = Prompt.ask("Filespace Password", password=True)
+            config['mount_point'] = Prompt.ask(
+                "Mount Point (Windows drive letter or path)",
+                default=existing_config.get('mount_point', 'L:')
+            )
+        else:
             console.print(f"  [{self.colors['info']}]ℹ LucidLink will be installed but not configured. End users will need to configure and connect manually.[/]")
         console.print()
 
@@ -757,6 +758,7 @@ class LLWinClientAzureSetup:
         config['install_7zip'] = Confirm.ask("  7-Zip", default=existing_config.get('install_7zip', False))
         config['install_notepad_pp'] = Confirm.ask("  Notepad++", default=existing_config.get('install_notepad_pp', False))
         config['install_adobe_cc'] = Confirm.ask("  Adobe Creative Cloud installer", default=existing_config.get('install_adobe_cc', False))
+        config['install_tc_benchmark'] = Confirm.ask("  TC Benchmark (storage benchmark)", default=existing_config.get('install_tc_benchmark', False))
         console.print()
 
         # Validate configuration
@@ -812,12 +814,13 @@ class LLWinClientAzureSetup:
         }
 
         filespace_settings = {
-            'Filespace Domain': display_config.get('filespace_domain', 'Not set'),
-            'Username': display_config.get('filespace_user', 'Not set'),
-            'Password': display_config.get('filespace_password', 'Not set'),
-            'Mount Point': display_config.get('mount_point', 'Not set'),
-            'Auto-configure LucidLink': display_config.get('auto_configure_lucidlink', 'yes'),
+            'Auto-configure LucidLink': display_config.get('auto_configure_lucidlink', 'no'),
         }
+        if display_config.get('auto_configure_lucidlink') == 'yes':
+            filespace_settings['Filespace Domain'] = display_config.get('filespace_domain', 'Not set')
+            filespace_settings['Username'] = display_config.get('filespace_user', 'Not set')
+            filespace_settings['Password'] = display_config.get('filespace_password', 'Not set')
+            filespace_settings['Mount Point'] = display_config.get('mount_point', 'Not set')
 
         vm_settings = {
             'VM Size': display_config.get('vm_size', 'Not set'),
@@ -856,7 +859,8 @@ class LLWinClientAzureSetup:
         resources_text += f"• {instance_count} × {display_config.get('data_disk_size_gb', 2048)} GB Data Disks\n"
         resources_text += f"• 1 × VNet ({display_config.get('vnet_cidr', '10.0.0.0/16')})\n"
         resources_text += f"• 1 × Network Security Group\n"
-        resources_text += f"• 1 × Azure Key Vault (for LucidLink credentials)"
+        if display_config.get('auto_configure_lucidlink') == 'yes':
+            resources_text += f"• 1 × Azure Key Vault (for LucidLink credentials)"
 
         console.print(Panel.fit(resources_text, border_style="yellow"))
 
@@ -885,6 +889,7 @@ admin_username     = "{config.get('admin_username', 'azureuser')}"
 admin_password     = "{config.get('admin_password', '')}"
 
 # LucidLink Configuration
+auto_configure_lucidlink = "{config.get('auto_configure_lucidlink', 'no')}"
 filespace_domain   = "{config.get('filespace_domain', '')}"
 filespace_user     = "{config.get('filespace_user', '')}"
 filespace_password = "{config.get('filespace_password', '')}"
@@ -1293,8 +1298,9 @@ kdcproxyname:s:
         console.print(f"  • VM Count: {self.config.get('instance_count', 'Not configured')}")
         console.print(f"  • OS Disk: {self.config.get('os_disk_size_gb', 'Not configured')} GB")
         console.print(f"  • Data Disk: {self.config.get('data_disk_size_gb', 'Not configured')} GB")
-        console.print(f"  • Filespace: {self.config.get('filespace_domain', 'Not configured')}")
-        console.print(f"  • Mount Point: {self.config.get('mount_point', 'Not configured')}")
+        if self.config.get('auto_configure_lucidlink') == 'yes':
+            console.print(f"  • Filespace: {self.config.get('filespace_domain', 'Not configured')}")
+            console.print(f"  • Mount Point: {self.config.get('mount_point', 'Not configured')}")
         if custom_image_id:
             console.print(f"  • Image: [bold cyan]Custom (Packer-built)[/bold cyan]")
         else:
@@ -1391,6 +1397,7 @@ kdcproxyname:s:
                     deploy_env['INSTALL_7ZIP'] = '1' if self.config.get('install_7zip', False) else '0'
                     deploy_env['INSTALL_NOTEPAD_PP'] = '1' if self.config.get('install_notepad_pp', False) else '0'
                     deploy_env['INSTALL_ADOBE_CC'] = '1' if self.config.get('install_adobe_cc', False) else '0'
+                    deploy_env['INSTALL_TC_BENCHMARK'] = '1' if self.config.get('install_tc_benchmark', False) else '0'
 
                     for vm_name in vm_names:
                         console.print(f"\n[bold]Deploying software to {vm_name}...[/bold]")
@@ -1452,6 +1459,7 @@ kdcproxyname:s:
                 with open(password_file, 'w') as f:
                     f.write(f"Windows VM Connection Information\n")
                     f.write(f"==================================\n\n")
+                    f.write(f"Region: {self.config.get('location', 'unknown')}\n")
                     f.write(f"Username: {admin_username}\n")
                     f.write(f"Password: {self.config.get('admin_password', '***')}\n\n")
                     f.write(f"VMs:\n")
@@ -1512,8 +1520,9 @@ kdcproxyname:s:
         summary_table.add_column("Value", style="white")
 
         summary_table.add_row("Total VMs", str(len(vm_names)))
-        summary_table.add_row("Filespace Domain", filespace_domain)
-        summary_table.add_row("Mount Point", mount_point)
+        if self.config.get('auto_configure_lucidlink') == 'yes':
+            summary_table.add_row("Filespace Domain", filespace_domain)
+            summary_table.add_row("Mount Point", mount_point)
         summary_table.add_row("Location", self.config.get('location', 'Not configured'))
         summary_table.add_row("Resource Group", outputs.get('resource_group_name', 'unknown'))
 
@@ -1678,7 +1687,7 @@ kdcproxyname:s:
             ))
 
             # Clear client configuration
-            if self.config.get('filespace_domain'):
+            if self.config.get('location'):
                 console.print()
                 if Confirm.ask("Clear stored client configuration?", default=False):
                     # Clear all client-specific config
@@ -1757,6 +1766,7 @@ kdcproxyname:s:
             f.write("Azure Windows VM Connection Information\n")
             f.write("=" * 60 + "\n\n")
             f.write("IMPORTANT: Keep this file secure!\n\n")
+            f.write(f"Region: {self.config.get('location', 'unknown')}\n")
             f.write(f"Admin Credentials:\n")
             f.write(f"  Username: {admin_username}\n")
             f.write(f"  Password: {admin_password}\n\n")
@@ -2386,8 +2396,8 @@ kdcproxyname:s:
                 self.load_config()
 
             # Build status line
-            if self.config and self.config.get('filespace_domain'):
-                config_status = f"[{self.colors['success']}]Configured ({self.config.get('filespace_domain')})[/]"
+            if self.config and self.config.get('location'):
+                config_status = f"[{self.colors['success']}]Configured ({self.config.get('location')})[/]"
             else:
                 config_status = f"[{self.colors['warning']}]Not Configured[/]"
 
