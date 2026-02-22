@@ -32,6 +32,7 @@ env/
 *.tfstate
 *.tfstate.*
 *.tfvars
+tfplan
 !.terraform.lock.hcl
 crash.log
 crash.*.log

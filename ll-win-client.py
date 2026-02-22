@@ -1012,19 +1012,24 @@ custom_image_id = "{custom_image_id}"
         elif command == 'validate':
             cmd = ['terraform', 'validate']
         elif command == 'plan':
-            cmd = ['terraform', 'plan']
+            cmd = ['terraform', 'plan', '-out=tfplan']
             if use_tfvars:
                 cmd.extend(['-var-file=terraform.tfvars'])
             if use_image_override:
                 cmd.extend(['-var-file=image-override.tfvars'])
         elif command == 'apply':
-            cmd = ['terraform', 'apply']
-            if use_tfvars:
-                cmd.extend(['-var-file=terraform.tfvars'])
-            if use_image_override:
-                cmd.extend(['-var-file=image-override.tfvars'])
-            if auto_approve:
-                cmd.append('-auto-approve')
+            # Use saved plan file if available (no -auto-approve needed with saved plans)
+            plan_file = self.terraform_dir / "tfplan"
+            if plan_file.exists():
+                cmd = ['terraform', 'apply', 'tfplan']
+            else:
+                cmd = ['terraform', 'apply']
+                if use_tfvars:
+                    cmd.extend(['-var-file=terraform.tfvars'])
+                if use_image_override:
+                    cmd.extend(['-var-file=image-override.tfvars'])
+                if auto_approve:
+                    cmd.append('-auto-approve')
         elif command == 'destroy':
             cmd = ['terraform', 'destroy']
             if use_tfvars:
@@ -1071,6 +1076,11 @@ custom_image_id = "{custom_image_id}"
 
                 process.wait()
                 output = ''.join(output_lines)
+
+                # Clean up saved plan file after apply (used or not, it's now stale)
+                if command in ('apply', 'destroy'):
+                    plan_file = self.terraform_dir / "tfplan"
+                    plan_file.unlink(missing_ok=True)
 
                 if process.returncode == 0:
                     progress.update(task, completed=100)
