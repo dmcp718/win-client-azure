@@ -44,7 +44,7 @@ fi
 
 # Optional Software Configuration (set to 1 to enable, 0 to disable)
 INSTALL_VLC="${INSTALL_VLC:-1}"              # VLC Media Player (default: enabled)
-INSTALL_VCREDIST="${INSTALL_VCREDIST:-0}"    # Visual C++ Redistributables (default: disabled)
+INSTALL_VCREDIST="${INSTALL_VCREDIST:-1}"    # Visual C++ Redistributables (default: enabled, needed by tframetest)
 INSTALL_7ZIP="${INSTALL_7ZIP:-0}"            # 7-Zip (default: disabled)
 INSTALL_NOTEPAD_PP="${INSTALL_NOTEPAD_PP:-0}" # Notepad++ (default: disabled)
 INSTALL_ADOBE_CC="${INSTALL_ADOBE_CC:-0}"    # Adobe Creative Cloud (default: disabled)
