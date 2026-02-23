@@ -1345,12 +1345,7 @@ kdcproxyname:s:
             Prompt.ask("\nPress Enter to continue")
             return
 
-        console.print()
-        if not self.auto_approve:
-            if not Confirm.ask("Apply these changes?", default=True):
-                return
-        else:
-            console.print(f"[{self.colors['info']}]Auto-approve enabled, proceeding with apply[/]")
+        console.print(f"[{self.colors['success']}]✓ Terraform plan completed successfully[/]")
 
         # Terraform apply
         console.print("\n[bold]Step 5: Applying infrastructure changes...[/bold]")
