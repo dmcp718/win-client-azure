@@ -188,10 +188,14 @@ main() {
     run_azure_cmd "Enabling Windows dark mode" \
         "\$themePath = 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'; if (-not (Test-Path \$themePath)) { New-Item -Path \$themePath -Force | Out-Null }; Set-ItemProperty -Path \$themePath -Name 'AppsUseLightTheme' -Value 0 -Type DWord; Set-ItemProperty -Path \$themePath -Name 'SystemUsesLightTheme' -Value 0 -Type DWord; Write-Host 'Dark mode enabled'"
 
-    # Step 13: Reboot VM to activate NVIDIA GPU drivers
-    # The NVIDIA GPU Driver Extension (installed by Terraform) requires a reboot
-    # to load the driver. We reboot after all software is installed, then wait
-    # for the VM to come back up.
+    # Step 13: Upgrade NVIDIA GRID driver to latest version
+    # The Terraform GPU extension installs an older GRID driver (553.x).
+    # DaVinci Resolve and other GPU apps need the latest GRID 18.x driver.
+    # Download URL from: https://learn.microsoft.com/en-us/azure/virtual-machines/windows/n-series-driver-setup
+    run_azure_cmd "Upgrading NVIDIA GRID driver to latest (573.76)" \
+        "\$driverVersion = (Get-CimInstance Win32_VideoController | Where-Object Name -like '*NVIDIA*').DriverVersion; Write-Host \"Current NVIDIA driver: \$driverVersion\"; \$targetVersion = '573.76'; \$driverUrl = 'https://download.microsoft.com/download/dcf4d002-3a53-469d-91af-04bddf57a9d7/573.76_grid_win10_win11_server2019_server2022_server2025_dch_64bit_international_azure_swl.exe'; \$driverPath = 'C:\\Temp\\nvidia-grid-driver.exe'; New-Item -ItemType Directory -Path 'C:\\Temp' -Force | Out-Null; Write-Host \"Downloading GRID \$targetVersion driver (~600MB)...\"; Invoke-WebRequest -Uri \$driverUrl -OutFile \$driverPath -TimeoutSec 600 -UseBasicParsing; \$fileSize = [math]::Round((Get-Item \$driverPath).Length / 1MB, 1); Write-Host \"Downloaded: \$fileSize MB\"; Write-Host 'Installing GRID driver (silent, ~5 min)...'; \$proc = Start-Process -FilePath \$driverPath -ArgumentList '-s -noreboot' -Wait -NoNewWindow -PassThru; Write-Host \"Installer exit code: \$(\$proc.ExitCode)\"; Remove-Item \$driverPath -Force -ErrorAction SilentlyContinue; Write-Host 'GRID driver upgrade complete — reboot required'"
+
+    # Step 14: Reboot VM to activate NVIDIA GPU drivers
     echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} Rebooting VM to activate NVIDIA GPU drivers..."
     az vm restart \
         --resource-group "$RESOURCE_GROUP" \
