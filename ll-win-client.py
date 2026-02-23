@@ -1076,7 +1076,7 @@ custom_image_id = "{custom_image_id}"
                     output_lines.append(line)
                     # Print important lines
                     if any(keyword in line for keyword in ['Error', 'Apply complete', 'Plan:', 'Destroy complete']):
-                        console.print(line.strip())
+                        console.print(line.strip(), markup=False)
                     logger.info(line.strip())
 
                 process.wait()
@@ -1406,7 +1406,7 @@ kdcproxyname:s:
                                 bufsize=1
                             )
                             for line in process.stdout:
-                                console.print(line.rstrip())
+                                console.print(line.rstrip(), markup=False)
                                 logger.info(line.rstrip())
                             process.wait()
                             if process.returncode == 0:
@@ -2235,7 +2235,7 @@ kdcproxyname:s:
             )
             if result.returncode != 0:
                 console.print(f"[{self.colors['error']}]Packer init failed:[/]")
-                console.print(result.stderr)
+                console.print(result.stderr, markup=False)
                 Prompt.ask("Press Enter to continue")
                 return
             console.print(f"[{self.colors['success']}]✓ Packer initialized[/]")
@@ -2262,7 +2262,7 @@ kdcproxyname:s:
             )
             if result.returncode != 0:
                 console.print(f"[{self.colors['error']}]Packer validate failed:[/]")
-                console.print(result.stderr)
+                console.print(result.stderr, markup=False)
                 Prompt.ask("Press Enter to continue")
                 return
             console.print(f"[{self.colors['success']}]✓ Packer template valid[/]")
@@ -2304,7 +2304,7 @@ kdcproxyname:s:
 
                 # Show important lines
                 if any(x in line.lower() for x in ['error', 'image', 'artifact', 'finished', 'creating', 'waiting', 'provisioning']):
-                    console.print(f"  {line}")
+                    console.print(f"  {line}", markup=False)
 
             process.wait()
 
