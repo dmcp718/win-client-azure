@@ -6,7 +6,7 @@ location           = "eastus"
 resource_group_name = "ll-win-client-rg"
 
 # VM Configuration
-vm_size            = "Standard_NV6ads_A10_v5"
+vm_size            = "Standard_NV12ads_A10_v5"
 instance_count     = 1
 
 # Disk Configuration

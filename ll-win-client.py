@@ -309,7 +309,7 @@ class LLWinClientAzureSetup:
 
         # Fall back to Azure VM size pattern validation
         # Azure VM sizes follow pattern: Standard_[Family][Version][Variant]_[Size]
-        # Examples: Standard_NV6ads_A10_v5, Standard_NC4as_T4_v3, Standard_D2s_v3
+        # Examples: Standard_NV12ads_A10_v5, Standard_NC4as_T4_v3, Standard_D2s_v3
         return bool(re.match(r'^Standard_[A-Z]+[0-9]+[a-z]*(_[A-Z0-9]+)?_v[0-9]+$', vm_size))
 
     def fetch_gpu_vm_sizes(self, location: str = None) -> List[Dict]:
@@ -427,7 +427,7 @@ class LLWinClientAzureSetup:
                 'gpu_memory_gb': 64
             },
             {
-                'type': 'Standard_NV6ads_A10_v5',
+                'type': 'Standard_NV12ads_A10_v5',
                 'vcpu': 6,
                 'memory_gb': 55,
                 'gpu_count': 1,
@@ -679,7 +679,7 @@ class LLWinClientAzureSetup:
             console.print(f"  {idx:2d}. [cyan]{instance['type']:25s}[/cyan] - {instance['vcpu']:2d} vCPUs, {instance['memory_gb']:3d} GB RAM, {gpu_desc}")
 
         # Mark recommended instances
-        recommended_gpu = ['Standard_NV6ads_A10_v5', 'Standard_NV12ads_A10_v5', 'Standard_NV18ads_A10_v5']
+        recommended_gpu = ['Standard_NV12ads_A10_v5', 'Standard_NV12ads_A10_v5', 'Standard_NV18ads_A10_v5']
         recommended_lucidlink = ['Standard_F16s_v2', 'Standard_L8s_v3']
 
         rec_gpu_indices = [idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] in recommended_gpu]
@@ -691,7 +691,7 @@ class LLWinClientAzureSetup:
             console.print(f"[dim]Recommended for LucidLink testing: {', '.join(str(i) for i in rec_ll_indices)}[/dim]")
 
         # Get existing VM type index or default to NV6ads_A10_v5 (graphics-enabled)
-        existing_type = existing_config.get('vm_size', 'Standard_NV6ads_A10_v5')
+        existing_type = existing_config.get('vm_size', 'Standard_NV12ads_A10_v5')
         default_choice = next((idx for idx, inst in enumerate(gpu_instance_types, 1) if inst['type'] == existing_type), 3)
 
         # Build choices list
@@ -851,7 +851,7 @@ class LLWinClientAzureSetup:
 
         # Show estimated costs
         instance_count = display_config.get('instance_count', 1)
-        vm_size = display_config.get('vm_size', 'Standard_NV6ads_A10_v5')
+        vm_size = display_config.get('vm_size', 'Standard_NV12ads_A10_v5')
 
         resources_text = f"[yellow]Estimated Resources:[/yellow]\n"
         resources_text += f"• {instance_count} × {vm_size} Virtual Machines\n"
@@ -877,7 +877,7 @@ location           = "{config.get('location', 'eastus')}"
 resource_group_name = "{config.get('resource_group_name', 'll-win-client-rg')}"
 
 # VM Configuration
-vm_size            = "{config.get('vm_size', 'Standard_NV6ads_A10_v5')}"
+vm_size            = "{config.get('vm_size', 'Standard_NV12ads_A10_v5')}"
 instance_count     = {config.get('instance_count', 1)}
 
 # Disk Configuration
