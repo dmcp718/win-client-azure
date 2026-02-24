@@ -602,16 +602,95 @@ class LLWinClientAzureSetup:
                 return None
         console.print()
 
-        # Step 3: Virtual Network Configuration
-        console.print("[bold cyan]Step 3: Virtual Network Configuration[/bold cyan]")
+        # Step 3: Image Selection
+        console.print("[bold cyan]Step 3: Image Selection[/bold cyan]")
+        console.print("[dim]Choose between a Packer-built custom image or Azure Marketplace image[/dim]")
+        console.print()
+
+        # Load custom images from registry
+        images_file = self.config_dir / "azure-images.json"
+        custom_images = []
+        if images_file.exists():
+            try:
+                with open(images_file, 'r') as f:
+                    custom_images = json.load(f)
+            except Exception:
+                pass
+
+        current_image_id = existing_config.get('custom_image_id', '')
+
+        if custom_images:
+            # Show last 5 custom images
+            recent_images = custom_images[-5:]
+            img_table = Table(title="Available Custom Images", box=box.ROUNDED)
+            img_table.add_column("#", style="cyan", justify="right", width=3)
+            img_table.add_column("Name", style="white")
+            img_table.add_column("Date", style="dim")
+            img_table.add_column("Image ID", style="green", max_width=50)
+            img_table.add_column("", style="yellow")
+
+            for idx, img in enumerate(recent_images, 1):
+                marker = "[yellow]← current[/yellow]" if img.get('image_id') == current_image_id else ""
+                img_table.add_row(
+                    str(idx),
+                    img.get('name', 'unknown'),
+                    img.get('created', 'unknown')[:10],
+                    img.get('image_id', 'unknown')[-50:],
+                    marker
+                )
+
+            console.print(img_table)
+            console.print(f"  M. [cyan]Windows 11 Pro 23H2 (Marketplace)[/cyan]")
+            console.print()
+
+            # Determine default
+            if current_image_id:
+                # Find current image index in recent list
+                default_img = 'M'
+                for idx, img in enumerate(recent_images, 1):
+                    if img.get('image_id') == current_image_id:
+                        default_img = str(idx)
+                        break
+            else:
+                default_img = 'M'
+
+            img_choice = Prompt.ask(
+                "Select image",
+                default=default_img
+            )
+
+            if img_choice.upper() == 'M':
+                config.pop('custom_image_id', None)
+                console.print(f"[{self.colors['success']}]✓ Using Marketplace image: Windows 11 Pro 23H2[/]")
+            else:
+                try:
+                    idx = int(img_choice) - 1
+                    if 0 <= idx < len(recent_images):
+                        config['custom_image_id'] = recent_images[idx]['image_id']
+                        console.print(f"[{self.colors['success']}]✓ Using custom image: {recent_images[idx].get('name', 'unknown')}[/]")
+                    else:
+                        console.print(f"[{self.colors['warning']}]Invalid selection, using Marketplace image[/]")
+                        config.pop('custom_image_id', None)
+                except ValueError:
+                    console.print(f"[{self.colors['warning']}]Invalid selection, using Marketplace image[/]")
+                    config.pop('custom_image_id', None)
+        else:
+            console.print(f"  [{self.colors['info']}]No custom images found. Use option 'B' from the main menu to build one.[/]")
+            console.print(f"  [{self.colors['info']}]Using default: Windows 11 Pro 23H2 (Marketplace)[/]")
+            config.pop('custom_image_id', None)
+
+        console.print()
+
+        # Step 4: Virtual Network Configuration
+        console.print("[bold cyan]Step 4: Virtual Network Configuration[/bold cyan]")
         config['vnet_cidr'] = Prompt.ask(
             "VNet CIDR Block",
             default=existing_config.get('vnet_cidr', '10.0.0.0/16')
         )
         console.print()
 
-        # Step 4: LucidLink Configuration
-        console.print("[bold cyan]Step 4: LucidLink Configuration[/bold cyan]")
+        # Step 5: LucidLink Configuration
+        console.print("[bold cyan]Step 5: LucidLink Configuration[/bold cyan]")
 
         # Ask if LucidLink should be auto-configured as service
         auto_config_default = existing_config.get('auto_configure_lucidlink', 'no')
@@ -640,8 +719,8 @@ class LLWinClientAzureSetup:
             console.print(f"  [{self.colors['info']}]ℹ LucidLink will be installed but not configured. End users will need to configure and connect manually.[/]")
         console.print()
 
-        # Step 5: VM Configuration
-        console.print("[bold cyan]Step 5: VM Configuration[/bold cyan]")
+        # Step 6: VM Configuration
+        console.print("[bold cyan]Step 6: VM Configuration[/bold cyan]")
 
         # Use fallback GPU instances (Azure VM sizes)
         gpu_instance_types = self._get_fallback_gpu_instances()
@@ -735,8 +814,8 @@ class LLWinClientAzureSetup:
         )
         console.print()
 
-        # Step 6: VM Admin Credentials
-        console.print("[bold cyan]Step 6: VM Admin Credentials[/bold cyan]")
+        # Step 7: VM Admin Credentials
+        console.print("[bold cyan]Step 7: VM Admin Credentials[/bold cyan]")
         config['admin_username'] = Prompt.ask(
             "Admin Username",
             default=existing_config.get('admin_username', 'azureuser')
@@ -750,11 +829,26 @@ class LLWinClientAzureSetup:
             config['admin_password'] = Prompt.ask("Admin Password (for RDP access)", password=True)
         console.print()
 
-        # Step 7: Optional Software
-        console.print("[bold cyan]Step 7: Optional Software[/bold cyan]")
-        console.print("[dim]Select which software to install on VMs after deployment[/dim]")
-        config['install_vlc'] = Confirm.ask("  VLC Media Player", default=existing_config.get('install_vlc', True))
-        config['install_vcredist'] = Confirm.ask("  Visual C++ Redistributables", default=existing_config.get('install_vcredist', False))
+        # Step 8: Optional Software
+        console.print("[bold cyan]Step 8: Optional Software[/bold cyan]")
+
+        if config.get('custom_image_id'):
+            console.print(f"[{self.colors['success']}]Pre-installed in custom image:[/]")
+            console.print(f"  [{self.colors['success']}]✓[/] Google Chrome")
+            console.print(f"  [{self.colors['success']}]✓[/] VLC Media Player")
+            console.print(f"  [{self.colors['success']}]✓[/] Visual C++ Redistributables")
+            console.print(f"  [{self.colors['success']}]✓[/] BGInfo (desktop info display)")
+            console.print(f"  [{self.colors['success']}]✓[/] LucidLink installer (pre-downloaded)")
+            console.print()
+            # Pre-baked software — set silently
+            config['install_vlc'] = True
+            config['install_vcredist'] = True
+            console.print("[dim]Additional software to install at deploy time:[/dim]")
+        else:
+            console.print("[dim]Select which software to install on VMs after deployment[/dim]")
+            config['install_vlc'] = Confirm.ask("  VLC Media Player", default=existing_config.get('install_vlc', True))
+            config['install_vcredist'] = Confirm.ask("  Visual C++ Redistributables", default=existing_config.get('install_vcredist', False))
+
         config['install_7zip'] = Confirm.ask("  7-Zip", default=existing_config.get('install_7zip', False))
         config['install_notepad_pp'] = Confirm.ask("  Notepad++", default=existing_config.get('install_notepad_pp', False))
         config['install_adobe_cc'] = Confirm.ask("  Adobe Creative Cloud installer", default=existing_config.get('install_adobe_cc', False))
@@ -831,9 +925,38 @@ class LLWinClientAzureSetup:
             'Admin Password': display_config.get('admin_password', 'Not set'),
         }
 
+        # Image settings
+        custom_image_id = display_config.get('custom_image_id', '')
+        image_settings = {}
+        if custom_image_id:
+            image_settings['Image Source'] = 'Custom (Packer-built)'
+            # Extract image name from registry if possible
+            images_file = self.config_dir / "azure-images.json"
+            image_name = None
+            if images_file.exists():
+                try:
+                    with open(images_file, 'r') as f:
+                        images = json.load(f)
+                    for img in images:
+                        if img.get('image_id') == custom_image_id:
+                            image_name = img.get('name')
+                            break
+                except Exception:
+                    pass
+            if image_name:
+                image_settings['Image Name'] = image_name
+            image_settings['Image ID'] = custom_image_id
+        else:
+            image_settings['Image Source'] = 'Windows 11 Pro 23H2 (Marketplace)'
+
         # Add settings to table
         table.add_row("[bold]Azure Settings[/bold]", "")
         for key, value in azure_settings.items():
+            table.add_row(f"  {key}", value)
+
+        table.add_row("", "")
+        table.add_row("[bold]Image Settings[/bold]", "")
+        for key, value in image_settings.items():
             table.add_row(f"  {key}", value)
 
         table.add_row("", "")
@@ -1254,41 +1377,8 @@ kdcproxyname:s:
         ))
         console.print()
 
-        # Check for custom images
+        # Read image selection from config (set during configuration wizard)
         custom_image_id = self.config.get('custom_image_id', '')
-        if not custom_image_id:
-            # Check local registry
-            images_file = self.config_dir / "azure-images.json"
-            if images_file.exists():
-                try:
-                    with open(images_file, 'r') as f:
-                        images = json.load(f)
-                    if images:
-                        console.print("[bold]Custom Images Available:[/bold]")
-                        for idx, img in enumerate(images[-3:], 1):  # Show last 3
-                            console.print(f"  {idx}. {img.get('name', 'unknown')} ({img.get('created', 'unknown')[:10]})")
-                        console.print()
-                        if Confirm.ask("Use a custom image?", default=False):
-                            if len(images) == 1:
-                                custom_image_id = images[0]['image_id']
-                            else:
-                                img_choice = Prompt.ask(
-                                    "Select image number",
-                                    default=str(min(len(images), len(images[-3:])))
-                                )
-                                try:
-                                    idx = int(img_choice) - 1
-                                    recent = images[-3:]
-                                    if 0 <= idx < len(recent):
-                                        custom_image_id = recent[idx]['image_id']
-                                except (ValueError, IndexError):
-                                    console.print(f"[{self.colors['warning']}]Invalid selection, using default image[/]")
-                            if custom_image_id:
-                                self.config['custom_image_id'] = custom_image_id
-                                console.print(f"[{self.colors['success']}]✓ Using custom image[/]")
-                        console.print()
-                except Exception:
-                    pass
 
         # Show deployment summary
         console.print("[bold]Deployment Summary:[/bold]")
@@ -1303,8 +1393,30 @@ kdcproxyname:s:
             console.print(f"  • Mount Point: {self.config.get('mount_point', 'Not configured')}")
         if custom_image_id:
             console.print(f"  • Image: [bold cyan]Custom (Packer-built)[/bold cyan]")
+            console.print()
+            console.print(f"  [{self.colors['success']}]Pre-installed (in image):[/]")
+            console.print(f"    ✓ Google Chrome")
+            console.print(f"    ✓ VLC Media Player")
+            console.print(f"    ✓ Visual C++ Redistributables")
+            console.print(f"    ✓ BGInfo")
+            console.print(f"    ✓ LucidLink installer (pre-downloaded)")
+            console.print(f"    ✓ Windows dark mode")
+            # Show deploy-time software
+            deploy_time = []
+            if self.config.get('install_7zip'):
+                deploy_time.append('7-Zip')
+            if self.config.get('install_notepad_pp'):
+                deploy_time.append('Notepad++')
+            if self.config.get('install_adobe_cc'):
+                deploy_time.append('Adobe Creative Cloud')
+            if self.config.get('install_tc_benchmark'):
+                deploy_time.append('TC Benchmark')
+            if deploy_time:
+                console.print(f"  [cyan]Configured at deploy time:[/cyan]")
+                for sw in deploy_time:
+                    console.print(f"    • {sw}")
         else:
-            console.print(f"  • Image: Windows 11 Pro 23H2 (marketplace)")
+            console.print(f"  • Image: Windows 11 Pro 23H2 (Marketplace)")
         console.print()
 
         # Confirm deployment (skip if auto-approve is enabled)
@@ -2392,7 +2504,10 @@ kdcproxyname:s:
 
             # Build status line
             if self.config and self.config.get('location'):
-                config_status = f"[{self.colors['success']}]Configured ({self.config.get('location')})[/]"
+                status_text = f"Configured ({self.config.get('location')})"
+                if self.config.get('custom_image_id'):
+                    status_text += " | Custom Image"
+                config_status = f"[{self.colors['success']}]{status_text}[/]"
             else:
                 config_status = f"[{self.colors['warning']}]Not Configured[/]"
 
